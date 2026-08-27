@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Evals — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/evals">Evals</a> / {{ table }}</p>
+    <h1>Evals</h1>
+    <h2>{{ tables|length }} kinds</h2>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn btn-p" href="/evals/new">Create eval table</a>
+</div>
+
+<div class="panel scroll-x">
+  {% if tables %}
+  <table class="cairn-table">
+    <thead><tr><th>Name</th><th>Target</th><th>Runs</th><th>Latest run</th><th class="num">Primary metric</th></tr></thead>
+    <tbody>
+      {% for tbl in tables %}
+      <tr>
+        <td class="nm"><a href="/evals/{{ tbl.name }}">{{ tbl.name }}</a>{% if tbl.desc %}<br><span class="dim" style="font-size:11.5px">{{ tbl.desc }}</span>{% endif %}</td>
+        <td class="mono dim">{{ tbl.dataset or '—' }}{% if tbl.rows is not none %}<br>{{ "{:,}".format(tbl.rows) }} rows{% endif %}</td>
+        <td class="runs">
+          <div class="runs-box">
+            <div class="runs-n"><b>{{ tbl.runs }}</b>{% if tbl.method_note %}<span>{{ tbl.method_note }}</span>{% endif %}</div>
+            {{ tbl.svg|safe }}
+          </div>
+        </td>
+        <td class="mono">{{ tbl.latest_id or '—' }}{% if tbl.latest_when %}<br><span class="dim" style="font-size:11px">{{ tbl.latest_when }}</span>{% endif %}</td>
+        <td class="num">{% if tbl.primary is not none %}<b>{{ tbl.primary|num }}</b>{% if tbl.delta is not none %}<br><span class="delta {{ 'up' if tbl.delta_good else ('down' if tbl.delta_good is false else '') }}">{{ '+' if tbl.delta>=0 else '' }}{{ tbl.delta|num }}</span>{% endif %}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="legend">
+    <span><i class="sw-p"></i>Latest run</span>
+    <span><i class="sw-g"></i>Same eval version</span>
+    <span><i class="sw-l"></i>Older eval version (not comparable)</span>
+    <span>Stone width = primary metric</span>
+    <span>last 8</span>
+  </p>
+  {% else %}
+  <div class="empty">No eval tables yet. Create one with <code>cairn eval create-table --table ...</code>.</div>
+  {% endif %}
+</div>
+{% endblock %}

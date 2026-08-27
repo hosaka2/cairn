@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# uv
+.uv/
+
+# test / tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# local cairn data (開発時の file:// ルート)
+/var/cairn/
+_cairn_data/
+*.local
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# secrets / local config
+.env

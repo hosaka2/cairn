@@ -1,0 +1,73 @@
+[project]
+name = "cairn"
+version = "0.0.1"
+description = "An append-only registry for evaluations and datasets, backed by object storage alone"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "cairn contributors" }]
+keywords = ["evaluation", "dataset", "mlops", "llmops", "registry"]
+dependencies = [
+    # core
+    "fsspec>=2024.2.0",
+    "pydantic>=2.6",
+    "pyarrow>=15.0",
+    "duckdb>=0.10",   # listing and paging, straight from storage
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    # S3
+    "s3fs",
+    # web UI
+    "fastapi",
+    "jinja2",
+    "uvicorn",
+    "python-multipart",
+    "markdown",
+]
+
+[project.optional-dependencies]
+# Extras are only for an alternative backend and for development.
+gcs = ["gcsfs"]
+dev = ["pytest>=8", "pytest-cov", "ruff", "pyright", "httpx"]   # httpx: needed by starlette's TestClient
+
+[project.scripts]
+cairn = "cairn.cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+exclude-newer = "2 weeks"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cairn"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=cairn --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["cairn"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 100
+# `app()` only runs under `python -m cairn.cli.main`, which is not how it is invoked.
+exclude_also = ['if __name__ == "__main__":']
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+# B008: typer declares options as argument defaults. S110: makedirs failures are ignored on purpose.
+ignore = ["B008", "S110"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # tests use assert

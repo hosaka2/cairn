@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}{{ table }} — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/evals">Evals</a> / {{ table }}</p>
+    <h1><span class="mono">{{ table }}</span></h1>
+    <p class="sub">{{ description }}</p>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn btn-p" href="/evals/{{ table }}/run">New run</a>
+</div>
+
+<div class="split">
+  <div class="rowgap">
+    {% if pending %}
+    {# Started, not evaluated: the inference is running somewhere and will write predictions. #}
+    <div class="panel">
+      <div class="panel-h"><h2>Running</h2><span class="tag t-flat" style="margin-left:auto">{{ pending|length }}</span></div>
+      <div class="stack">
+        {% for p in pending %}
+        <div class="stone-row" style="grid-template-columns:1fr" aria-current="{{ 'true' if p.eval_id == started else 'false' }}">
+          <div class="stone-meta" style="flex-wrap:wrap">
+            <span class="stone-v" style="font-size:12.5px">{{ p.title }}</span>
+            <span class="tag t-flat">eval {{ p.version }}</span>
+            <span class="stone-when">{{ p.when }}</span>
+          </div>
+          <div class="stone-meta" style="margin-top:4px">
+            <span class="hint mono">{{ p.eval_id }}</span>
+            <div class="spacer"></div>
+            {% if p.can_score %}
+            <form method="post" action="/evals/{{ table }}/runs/{{ p.eval_id }}/score">
+              <button class="btn btn-sm" type="submit">Evaluate</button>
+            </form>
+            {% else %}
+            <span class="hint">no evaluator for {{ p.version }} here</span>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="legend"><span>Started, not evaluated yet. The inference writes predictions with <span class="mono">cairn eval put-prediction</span></span></p>
+    </div>
+    {% endif %}
+
+  <div class="panel">
+    <div class="panel-h"><h2>Runs</h2><span class="tag t-flat" style="margin-left:auto">{{ runs|length }} total</span></div>
+    <div class="stack">
+      {% for r in runs %}
+      <a class="stone-row{% if r.compared %} cmp{% endif %}" href="/evals/{{ table }}?run={{ r.eval_id }}" aria-current="{{ 'true' if r.selected else 'false' }}" style="text-decoration:none;color:inherit">
+        <div class="stone-cell"><span class="stone" style="width:{{ r.width }}px"></span></div>
+        <div class="stone-meta">
+          <span class="stone-v" style="font-size:12.5px">{{ r.title or r.eval_id }}</span>
+          {% if r.primary is not none %}<span class="stone-add">{{ r.primary|num }}</span>{% endif %}
+          {% if r.compared %}<span class="tag t-flat">comparing</span>{% endif %}
+          <span class="stone-when">{{ r.when }}</span>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    <p class="legend"><span>Stone width = {{ primary_label }}</span></p>
+  </div>
+  </div>
+
+  <div class="rowgap">
+    {% if views %}
+    <div class="panel scroll-x">
+      <div class="panel-h">
+        <h2>{% if comparing %}Comparison ({{ views|length }}){% else %}Result: {{ views[0].title }}{% endif %}</h2>
+        <span class="dim" style="font-size:12.5px">{{ selected.dataset }} · eval {{ selected.evaluator_version }}</span>
+        <div class="spacer"></div>
+        {% if cmp_choices %}
+        <form method="get" class="cmpform">
+          <input type="hidden" name="run" value="{{ selected.eval_id }}">
+          {% for c in cmp_ids %}<input type="hidden" name="cmp" value="{{ c }}">{% endfor %}
+          <select name="cmp">{% for c in cmp_choices %}<option value="{{ c.eval_id }}">{{ c.title }}{% if c.other_data %} (other data){% endif %}</option>{% endfor %}</select>
+          <button class="btn btn-sm" type="submit">Compare with another run</button>
+        </form>
+        {% endif %}
+        {% if comparing %}<a class="btn btn-sm" href="/evals/{{ table }}?run={{ selected.eval_id }}">Stop comparing</a>{% endif %}
+      </div>
+      <table>
+        <thead><tr>{% if comparing %}<th>Run</th>{% endif %}{% for c in columns %}<th class="num">{{ c.display }}</th>{% endfor %}</tr></thead>
+        <tbody>
+          {% for v in table_rows %}
+          <tr>
+            {% if comparing %}<td style="font-size:12.5px;white-space:nowrap">{{ v.title }}{% if v.subject %} <span class="dim" style="font-size:11px">this run</span>{% endif %}{% if v.other_data %}
+              <span class="tag t-false" title="Scored on other data ({{ v.snapshot_id }}), so these numbers do not answer the same question.">other data</span>{% endif %}</td>{% endif %}
+            {% for c in columns %}
+            <td class="num">
+              <b>{{ v.row.get(c.name)|num }}</b>
+              {% set d = (v.delta or {})[c.name] if v.delta else none %}
+              {% if d %}<br><span class="delta {{ 'up' if d.good else ('down' if d.good is false else '') }}">{{ '+' if d.value > 0 else '' }}{{ d.value|num }}</span>{% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="legend">
+        {% if comparing %}<span>Deltas show how <b>{{ subject_title }}</b> did against each run</span>{% endif %}
+        {% if selected.snapshot_id %}<span title="Content hash of the dataset this run was scored on. Only runs sharing it are comparable.">{{ "this run's data" if comparing else "data" }} <b class="mono">{{ selected.snapshot_id }}</b>{% if selected.row_count is not none %} · {{ selected.row_count }} rows{% endif %}</span>{% endif %}
+      </p>
+    </div>
+
+    {# Note, metadata and report of the selected run. The runs it is compared against
+       contribute their numbers to the table above and nothing else. #}
+    {% if views %}
+      {% set v = views[0] %}
+      {% if v.memo %}
+      <details class="panel fold">
+        <summary class="panel-h"><h2>Note</h2></summary>
+        <div class="panel-b"><p class="memo">{{ v.memo }}</p></div>
+      </details>
+      {% endif %}
+      {% if v.metadata_json %}
+      <details class="panel fold">
+        <summary class="panel-h"><h2>Metadata</h2><span class="dim mono" style="font-size:11px;margin-left:auto">config + eval script</span></summary>
+        <div class="panel-b"><pre class="hlp-pre">{{ v.metadata_json }}</pre></div>
+      </details>
+      {% endif %}
+      <details class="panel fold" open>
+        <summary class="panel-h"><h2>Report</h2>
+          <span class="dim mono" style="font-size:11px;margin-left:auto">generated by the eval script</span>
+          {# Outside the summary's toggle: opening the report must not fold the panel. #}
+          <a class="btn btn-sm openfull" href="/evals/{{ table }}/runs/{{ v.eval_id }}/report"
+             target="_blank" rel="noopener" title="Open the report in a new tab">Open ↗</a>
+        </summary>
+        <div class="report">
+          {% if v.report_html %}{{ v.report_html|safe }}{% else %}<p class="dim">No report.</p>{% endif %}
+        </div>
+      </details>
+    {% endif %}
+    {% else %}
+    <div class="panel"><div class="empty">No scored runs yet.</div></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

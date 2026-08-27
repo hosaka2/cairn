@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ status }} — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/evals">Evals</a> / <a href="/datasets">Datasets</a></p>
+    <h1>{{ status }}</h1>
+  </div>
+</div>
+<div class="panel"><div class="panel-b">
+  <div class="note"><b>{{ "Not found" if status == 404 else "Cannot do that" }}</b><span>{{ detail }}</span></div>
+  <p class="hint" style="margin-top:12px"><a href="{{ back }}">Go back</a></p>
+</div></div>
+{% endblock %}

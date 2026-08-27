@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Add data — cairn{% endblock %}
+{% set MLABEL = {'script': 'Script', 'jsonl': 'JSONL'} %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/datasets/{{ name }}">{{ name }}</a> / Add data</p>
+    <h1>Add data</h1>
+    <p class="sub">Pick an input method. Nothing is saved until you confirm.</p>
+  </div>
+</div>
+
+{% if modes|length > 1 %}
+<div class="modetabs">
+  {% for m in modes %}
+  <a class="mtab{% if m == mode %} on{% endif %}" href="/datasets/{{ name }}/ingest?mode={{ m }}">{{ MLABEL[m] }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<p class="flow"><i {% if preview is not defined %}aria-current="true"{% endif %}>Input</i><s>——</s>
+  <i {% if preview is defined %}aria-current="true"{% endif %}>Review draft</i><s>——</s><i>Confirm</i></p>
+
+<div class="form-2col">
+  <div class="panel">
+    <div class="panel-h"><h2>{{ MLABEL[mode] }}</h2>{% if mode == 'script' %}<span class="tag t-flat" style="margin-left:auto">ingestor</span>{% endif %}</div>
+    <div class="panel-b">
+      <form method="post" action="/datasets/{{ name }}/ingest/preview">
+        <input type="hidden" name="mode" value="{{ mode }}">
+        {% if mode == 'script' %}
+          {% for f in fields %}
+          <div class="field">
+            <div class="lab"><b>{{ f.name }}</b><span class="type">{{ f.type }}</span>{% if f.required %}<span class="req">required</span>{% endif %}</div>
+            {% if f.widget == 'bool' %}
+              <select name="{{ f.name }}"><option value="true">true</option><option value="false">false</option></select>
+            {% elif f.widget == 'select' %}
+              <select name="{{ f.name }}">{% for o in f.options %}<option>{{ o }}</option>{% endfor %}</select>
+            {% else %}
+              <input type="text" name="{{ f.name }}" value="{{ (raw[f.name] if raw and f.name in raw else f.default) }}">
+            {% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+          <div class="field"><div class="lab"><b>JSONL</b><span class="type">1 line = 1 record</span></div>
+            <textarea name="jsonl" spellcheck="false" placeholder="{{ jsonl_example }}">{{ raw.jsonl if raw else '' }}</textarea></div>
+        {% endif %}
+        <button class="btn btn-p" type="submit">Preview</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="rowgap">
+    {% if preview is not defined %}
+    <aside class="yaml-help">
+      {% if mode == 'script' %}
+      <h3>{{ t("Where do these fields come from?") }}</h3>
+      <p class="hlp-lead">{{ t("These fields are <b>defined by this dataset's ingest script</b>. What they are, their types and whether they are required is decided there; here you only fill in values.")|safe }}</p>
+      <dl class="hlp">
+        <dt>{{ t("Fields") }}</dt><dd>{{ t("Fields of") }} <code>Input</code> {{ t("in") }} <code>datasets/{{ name }}/ingest.py</code>. {{ t("The script reads them and yields rows that conform to schema.yaml.") }}</dd>
+        <dt>{{ t("Row key") }}</dt><dd>{{ t("The <b>key is defined in schema.yaml</b> — separate from these input fields.")|safe }}</dd>
+        <dt>{{ t("Nothing is saved until you confirm") }}</dt><dd>{{ t("The preview is a draft; rows are appended only on <b>confirm</b>.")|safe }}</dd>
+      </dl>
+      {% else %}
+      <h3>{{ t("How to paste JSONL") }}</h3>
+      <p class="hlp-lead">{{ t("Paste <b>one JSON object per line</b>. Every line must conform to schema.yaml.")|safe }}</p>
+      <dl class="hlp">
+        <dt>key</dt><dd>{{ t("The") }} <code>key</code> {{ t("column in schema.yaml is the row identity. Re-appending the same key upserts (last write wins).") }}</dd>
+        <dt>{{ t("required columns") }}</dt><dd>{{ t("Rows missing them are rejected in the preview; you can add the rest.") }}</dd>
+        <dt>{{ t("Large data") }}</dt><dd>{{ t("This box is for small pastes (there is a size limit). For tens of thousands of rows, the CLI reads a file and is much faster:") }}
+          <br><code>cairn dataset ingest {{ name }} --jsonl file.jsonl</code></dd>
+      </dl>
+      <p class="hlp-eg">{{ t("Example (generated from this schema)") }}</p>
+      <pre class="hlp-pre">{{ jsonl_example }}</pre>
+      {% endif %}
+    </aside>
+    {% else %}
+    <div class="panel scroll-x">
+      <div class="panel-h"><h2>Draft</h2><span class="dim" style="font-size:12.5px">first {{ preview|length }} of {{ n }}</span></div>
+      {% if preview %}
+      <table>
+        <thead><tr>{% for k in preview[0].keys() %}<th>{{ k }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for r in preview %}<tr>{% for v in r.values() %}<td class="mono">{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table>
+      {% else %}<div class="empty">No rows. Check your input.</div>{% endif %}
+    </div>
+    <div class="panel"><div class="panel-b">
+      {% if errors %}<div class="note"><b>{{ errors|length }}</b><span>lines were rejected. You can add the rest.</span>
+        <ul style="margin:6px 0 0 16px;font-size:12px">{% for e in errors[:5] %}<li>{{ e.errs|join(', ') }}</li>{% endfor %}</ul></div>{% endif %}
+      <form method="post" action="/datasets/{{ name }}/ingest">
+        <input type="hidden" name="mode" value="{{ mode }}">
+        {% if mode == 'script' %}{% for f in fields %}<input type="hidden" name="{{ f.name }}" value="{{ raw[f.name] }}">{% endfor %}
+        {% else %}<textarea name="jsonl" style="display:none">{{ raw.jsonl }}</textarea>{% endif %}
+        <div style="display:flex;gap:9px;margin-top:6px">
+          <button class="btn btn-p" type="submit">Add {{ n_good }} rows</button>
+          <a class="btn" href="/datasets/{{ name }}">Cancel</a>
+        </div>
+      </form>
+    </div></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

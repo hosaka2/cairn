@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/help">Help</a> / {{ title }}</p>
+    <h1>{{ title }}</h1>
+    <p class="sub">Bundled manual (also readable with <span class="mono">cairn docs {{ page }}</span>).</p>
+  </div>
+</div>
+
+<div class="split">
+  <div class="rowgap">
+    <div class="panel">
+      <div class="panel-h"><h2>Pages</h2></div>
+      <div class="stack">
+        {% for p in pages %}
+        <a class="stone-row" href="/help/{{ p.slug }}" aria-current="{{ 'true' if p.slug == page else 'false' }}" style="text-decoration:none;color:inherit">
+          <div class="stone-meta"><span class="stone-v" style="font-size:12.5px">{{ p.title }}</span></div>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h"><h2>Script status</h2></div>
+      <div class="panel-b">
+        {% if problems %}
+        <div class="note"><b>{{ problems|length }}</b><span>scripts do not satisfy the contract.</span></div>
+        <dl class="kv" style="margin-top:10px">
+          {% for p in problems %}<dt class="mono" style="font-size:11px">{{ p.where }}</dt><dd>{{ p.what }}</dd>{% endfor %}
+        </dl>
+        {% else %}
+        <p class="hint">No problems found. Run <span class="mono">cairn check</span> any time to inspect.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h"><h2>{{ title }}</h2></div>
+    <div class="report">{{ html|safe }}</div>
+  </div>
+</div>
+{% endblock %}

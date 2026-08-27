@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Datasets — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/datasets">Datasets</a> / {{ name }}</p>
+    <h1>Datasets</h1>
+    <h2>{{ datasets|length }} total</h2>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn btn-p" href="/datasets/new">Create dataset</a>
+</div>
+
+<div class="panel scroll-x">
+  {% if datasets %}
+  <table>
+    <thead><tr><th>Name</th><th>Kind</th><th class="num">Rows</th><th class="num">Ingests</th><th>Updated</th></tr></thead>
+    <tbody>
+      {% for d in datasets %}
+      <tr>
+        <td class="nm"><a href="/datasets/{{ d.name }}">{{ d.name }}</a></td>
+        <td><span class="tag t-flat">{{ d.kind }}</span></td>
+        <td class="num">{{ "{:,}".format(d.rows) }}</td>
+        <td class="num">{{ d.ingests }}</td>
+        <td class="mono dim">{{ d.updated }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">No datasets yet. Create one with <code>cairn dataset create</code> or <code>cairn demo-seed</code>.</div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/datasets">Datasets</a> / {{ name }}</p>
+    <h1><span class="mono">{{ name }}</span><span class="hcount">{{ "{:,}".format(total) }} rows</span></h1>
+    <p class="sub">{{ description }}</p>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn btn-p" href="/datasets/{{ name }}/ingest">Add data</a>
+</div>
+
+<div class="split">
+  <div class="panel">
+    <div class="panel-h"><h2>Ingest history</h2><span class="dim" style="margin-left:auto;font-size:12.5px">{{ ingests|length }} times</span></div>
+    <div class="stack">
+      {% for ing in ingests %}
+      <div class="stone-row">
+        <div class="stone-cell"><span class="stone" style="width:{{ ing.width }}px"></span></div>
+        <div class="stone-meta">
+          <span class="stone-add">+{{ ing.n }}</span>
+          {% if ing.note %}<span class="stone-note">{{ ing.note }}</span>{% endif %}
+          <span class="stone-when">{{ ing.when }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="legend"><span>Stone width = rows added by that ingest</span></p>
+  </div>
+
+  <div class="panel scroll-x">
+    <div class="panel-h">
+      <h2>Samples</h2>
+      <span class="dim" style="font-size:12.5px">{{ offset + 1 if preview else 0 }}–{{ offset + preview|length }} / {{ "{:,}".format(total) }} rows</span>
+      <div class="spacer"></div>
+      {% if has_prev %}<a class="btn btn-sm" href="/datasets/{{ name }}?offset={{ offset - page_size }}">Prev</a>{% endif %}
+      {% if has_next %}<a class="btn btn-sm" href="/datasets/{{ name }}?offset={{ offset + page_size }}">Next</a>{% endif %}
+    </div>
+    {% if preview %}
+    <table>
+      <thead><tr>{% for c in columns %}<th{% if c.num %} class="num"{% endif %}>{{ c.display }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for r in preview %}
+        <tr>{% for c in columns %}<td class="{{ 'num' if c.num }}{{ ' mono' if c.mono }}">
+          {%- set v = r[c.name] -%}
+          {%- if v is none -%}{%- elif c.bool -%}<span class="tag {{ 't-true' if v else 't-false' }}">{{ 'true' if v else 'false' }}</span>{%- else -%}{{ v }}{%- endif -%}
+        </td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">No rows yet. Use “Add data” to ingest.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

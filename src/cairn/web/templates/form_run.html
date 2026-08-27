@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}New run — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/evals">Evals</a> / <a href="/evals/{{ table }}">{{ table }}</a> / new run</p>
+    <h1>New run</h1>
+    <p class="sub">Starts a run: the data is pinned to it. The inference is performed by the
+      pipeline, which writes its predictions against it.</p>
+  </div>
+</div>
+
+<form method="post" action="/evals/{{ table }}/run">
+<div class="split">
+  <div class="panel"><div class="panel-h"><h2>Target</h2></div><div class="panel-b">
+    <div class="field"><div class="lab"><b>Title</b><span class="req">required</span></div>
+      <input type="text" name="title" required style="font-family:var(--sans);font-size:13px" placeholder="Short name for this run"></div>
+    <div class="field"><div class="lab"><b>Dataset</b></div>
+      <select name="dataset">{% for d in datasets %}<option{% if d == default_dataset %} selected{% endif %}>{{ d }}</option>{% endfor %}</select>
+      <p class="hint">{% if default_dataset %}Default from table.yaml (<span class="mono">{{ default_dataset }}</span>). You can change it.{% else %}Runs against the current contents.{% endif %}</p></div>
+    <div class="field"><div class="lab"><b>Eval version</b></div>
+      {% if versions %}
+      <select name="evaluator">{% for v in versions %}<option>{{ v }}</option>{% endfor %}</select>
+      {% else %}
+      <input type="text" name="evaluator" value="v1" placeholder="v1">
+      {% endif %}
+      <p class="hint">Runs scored with a different eval version are not comparable.</p></div>
+    <div class="field"><div class="lab"><b>Note</b><span class="type">optional</span></div>
+      <textarea name="comment" style="font-family:var(--sans);font-size:13px;min-height:70px" placeholder="What this run checks, findings, …"></textarea></div>
+  </div></div>
+
+  <div class="rowgap">
+    <div class="panel"><div class="panel-h"><h2>Config</h2><span class="dim mono" style="font-size:11px;margin-left:auto">CONFIG in run.py</span></div>
+      <div class="panel-b">
+        {% if cfg_fields %}
+        <p class="hint" style="margin-bottom:12px">Defaults come from <code>CONFIG</code> in run.py. Change them here per run.</p>
+        {% for f in cfg_fields %}
+        <div class="field"><div class="lab"><b>{{ f.name }}</b><span class="type">{{ f.type }}</span></div>
+          <input type="text" name="{{ f.name }}" value="{{ f.default }}"></div>
+        {% endfor %}
+        {% else %}
+        <p class="hint" style="margin-bottom:12px">No <code>CONFIG</code> was found, so the config is
+          free JSON. It is stored with the run and is where the model version and its parameters go.</p>
+        <textarea name="config" style="min-height:90px">{}</textarea>
+        {% endif %}
+      </div>
+    </div>
+    <div class="panel"><div class="panel-b">
+      <div style="display:flex;gap:9px;align-items:center">
+        <button class="btn btn-p" type="submit">Run</button>
+        <a class="btn" href="/evals/{{ table }}">Cancel</a>
+      </div>
+      <p class="hint" style="margin-top:10px">You get an <span class="mono">eval_id</span> and the data
+        is pinned to it. Whatever performs the inference reads its work with
+        <span class="mono">cairn eval targets</span> and writes back with
+        <span class="mono">cairn eval put-prediction</span>; the run is evaluated once they are in.
+        With a script registered for this table, <span class="mono">cairn eval run</span> performs it
+        in one command.</p>
+    </div></div>
+  </div>
+</div>
+</form>
+{% endblock %}

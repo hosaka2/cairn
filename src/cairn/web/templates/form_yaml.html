@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="{{ '/datasets' if kind=='dataset' else '/evals' }}">{{ 'Datasets' if kind=='dataset' else 'Evals' }}</a> / create</p>
+    <h1>{{ title }}</h1>
+    <p class="sub">Paste {{ label }} to create it. The column definitions become the format of the list view.</p>
+  </div>
+</div>
+<div class="form-2col">
+  <div class="panel">
+    <div class="panel-b">
+      {% if error %}<div class="note"><b>Error</b><span>{{ error }}</span></div>{% endif %}
+      <form method="post" action="{{ action }}">
+        {% if kind == 'eval' %}
+        <div class="field">
+          <div class="lab"><b>Target dataset</b><span class="type">optional</span></div>
+          <select name="dataset">
+            <option value="">— none (pick at run time / write it in the YAML)</option>
+            {% for d in datasets %}<option{% if d == sel_dataset %} selected{% endif %}>{{ d }}</option>{% endfor %}
+          </select>
+          <p class="hint">Default target. Preselected in the run form and changeable per run.</p>
+        </div>
+        {% endif %}
+        <div class="field">
+          <div class="lab"><b>{{ label }}</b></div>
+          <textarea name="yaml" spellcheck="false" style="min-height:320px">{{ value }}</textarea>
+        </div>
+        <div style="display:flex;gap:9px">
+          <button class="btn btn-p" type="submit">Create</button>
+          <a class="btn" href="{{ '/datasets' if kind=='dataset' else '/evals' }}">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <aside class="yaml-help">
+    {% if kind == 'dataset' %}
+    <h3>{{ t("Writing schema.yaml") }}</h3>
+    <p class="hlp-lead">{{ t("A dataset is an append-friendly ledger. Here you only decide <b>the shape of the columns</b>; rows come from ingest.")|safe }}</p>
+    <dl class="hlp">
+      <dt>name</dt><dd>{{ t("Dataset name (used in the URL and directory name).") }}</dd>
+      <dt>key</dt><dd>{{ t("Column that makes a row unique. <b>Re-appending the same key upserts</b> (last write wins).")|safe }}</dd>
+      <dt>kind</dt><dd>{{ t("Display label for the kind (tabular / detection / sfm / llm …). Optional.") }}</dd>
+      <dt>columns[].type</dt><dd><code>str / int / float / bool / datetime</code>,
+        {{ t("lists are") }} <code>list[float] / list[int] / list[str]</code>,
+        {{ t("and undecided nesting is") }} <code>json</code>.</dd>
+      <dt>columns[].required</dt><dd>{{ t("true makes it mandatory (rows missing it are rejected).") }}</dd>
+      <dt>nested</dt><dd>{{ t("A <b>structured child table</b> such as a time series. Kept inline in the row JSON, hidden from the list view, and read at eval time with")|safe }} <code>ctx.dataset.frames(id)</code> {{ t("(this is where structured ground truth goes).") }}</dd>
+      <dt>{{ t("Heavy assets") }}</dt><dd>{{ t("Raw waveforms, images, masks and point clouds do not go in nested. Put a <b>URL/path in a scalar column</b> and read it at eval time with")|safe }} <code>ctx.read_bytes(url)</code> {{ t("(the ledger holds only the reference).") }}</dd>
+    </dl>
+    <p class="hlp-eg">{{ t("Example") }}</p>
+    <pre class="hlp-pre">name: sensor-scans
+kind: sensor
+key: sample_id
+columns:
+  - {name: sample_id,    type: str, required: true}
+  - {name: site,         type: str}
+  - {name: calibrated,   type: bool}
+  - {name: waveform_url, type: str}  # heavy assets: reference only, read at eval time
+  - {name: gt,           type: int, required: true}
+nested:
+  readings:                          # the raw series. inline in the row, hidden from the list
+    schema:
+      - {name: t,     type: float}
+      - {name: value, type: float}</pre>
+    {% else %}
+    <h3>{{ t("Writing table.yaml") }}</h3>
+    <p class="hlp-lead">{{ t("An eval table is the list where runs stack up as stones. Here you decide <b>the columns shown in that list</b>.")|safe }}</p>
+    <dl class="hlp">
+      <dt>dataset</dt><dd>{{ t("Default target. <b>Filled in by the selector on the left</b> (you may also write it in the YAML; if the selector is empty the YAML wins).")|safe }}</dd>
+      <dt>columns[].primary</dt><dd>{{ t("<b>Primary metric = stone width</b>. Put")|safe }} <code>primary: true</code> {{ t("on <b>exactly one column</b> (defaults to the first).")|safe }}</dd>
+      <dt>columns[].direction</dt><dd>{{ t("Which way is better.") }} <code>higher</code> {{ t("(bigger is better) /") }}
+        <code>lower</code> {{ t("(smaller is better, e.g. a miss rate). Decides delta colors and stone direction.") }}</dd>
+      <dt>columns[].scale</dt><dd>{{ t("Absolute range for the stone width,") }} <code>[min, max]</code>. {{ t("With it, small differences are not exaggerated. Without it, the scale is relative to the runs on screen.") }}</dd>
+      <dt>columns[].display</dt><dd>{{ t("Header label in the list view. Defaults to name.") }}</dd>
+      <dt>default_sort</dt><dd>{{ t("Default ordering (e.g.") }} <code>created_at desc</code>).</dd>
+    </dl>
+    <p class="hlp-note">{{ t("Columns must <b>match exactly</b> the row your Evaluator returns (common metadata such as eval_id / snapshot_id / evaluator_version is added by cairn).")|safe }}</p>
+    <p class="hlp-eg">{{ t("Example") }}</p>
+    <pre class="hlp-pre">name: scan-anomaly
+columns:
+  - {name: f1,        type: float, display: "F1",
+     primary: true, direction: higher, scale: [0, 1]}
+  - {name: miss_rate, type: float, display: "missed%",
+     direction: lower}
+  - {name: coverage,  type: float, display: "coverage%"}
+default_sort: created_at desc</pre>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

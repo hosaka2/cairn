@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="{{ lang() }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}cairn{% endblock %}</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/cairn.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">
+    <svg width="17" height="21" viewBox="0 0 17 21" fill="none" aria-hidden="true">
+      <rect x="5" y="1" width="7" height="4" rx="1" fill="#0E6B63"/>
+      <rect x="2.5" y="6.5" width="12" height="4.5" rx="1" fill="#4A525C"/>
+      <rect x="0" y="12.5" width="17" height="5" rx="1" fill="#CBD0D7"/>
+      <rect x="1.5" y="19" width="14" height="1.6" rx=".8" fill="#E3E6EA"/>
+    </svg>
+    <b>cairn</b>
+  </a>
+  <nav class="tabs" role="tablist">
+    <a class="tab" role="tab" aria-selected="{{ 'true' if tab=='datasets' else 'false' }}" href="/datasets">Datasets</a>
+    <a class="tab" role="tab" aria-selected="{{ 'true' if tab=='evals' else 'false' }}" href="/evals">Evals</a>
+  </nav>
+  <a class="tab help-tab" aria-selected="{{ 'true' if tab=='help' else 'false' }}" href="/help" title="How to use cairn and the script contract">Help</a>
+  <span class="root">{{ root }}</span>
+</header>
+<div class="wrap">
+{% block body %}{% endblock %}
+</div>
+</body>
+</html>

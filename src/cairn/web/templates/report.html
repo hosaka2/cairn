@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — cairn{% endblock %}
+{% block body %}
+<div class="phead">
+  <div>
+    <p class="crumb"><a href="/evals">Evals</a> / <a href="/evals/{{ table }}">{{ table }}</a> / report</p>
+    <h1>{{ title }}</h1>
+    <p class="sub">{{ dataset }} · eval {{ evaluator_version }}
+      {%- if snapshot_id %} · <span class="mono">data {{ snapshot_id }}</span>{% endif %} ·
+      <span class="mono">{{ eval_id }}</span></p>
+  </div>
+  <div class="spacer"></div>
+  <a class="btn" href="/evals/{{ table }}?run={{ eval_id }}">Back to the run</a>
+</div>
+
+<div class="panel">
+  <div class="report report-wide">
+    {% if report_html %}{{ report_html|safe }}{% else %}<p class="dim">No report.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}
