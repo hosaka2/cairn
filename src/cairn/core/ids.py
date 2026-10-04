@@ -67,6 +67,11 @@ def eval_id() -> str:
     return "e_" + ulid()
 
 
+def note_id() -> str:
+    """Id for a note on a run. Sorts by creation time, like every other id here."""
+    return "n_" + ulid()
+
+
 def ingest_id() -> str:
     """Id of an ingest."""
     return "ing_" + ulid()

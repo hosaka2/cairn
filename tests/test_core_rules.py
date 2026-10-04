@@ -379,6 +379,52 @@ def test_a_withdrawn_run_leaves_the_listings_but_not_the_ledger(tmp_path):
     assert evals.count_predictions(st, "t", eid) == 1
 
 
+def test_notes_add_free_text_to_a_result_without_rewriting_it(tmp_path):
+    """Scoring refuses to run twice, so what a person concludes later goes beside the result."""
+    st = _st(tmp_path)
+    ds.create_dataset(st, DS, created_by="t")
+    ds.append(st, "d", [{"id": "a", "v": 1}], created_by="t", input={})
+    evals.create_eval_table(st, TABLE)
+    eid = evals.create_run(st, "t", dataset="d", evaluator_version="v1", title="run")
+    evals.write_prediction(st, "t", eid, "a", b"{}")
+    evals.score_run(st, "t", eid, _eval())
+
+    first = evals.add_note(st, "t", eid, "勝ち 146 / 負け 122", created_by="tester")
+    evals.add_note(st, "t", eid, "セグ数で層化しても同じ")
+
+    notes = evals.get_notes(st, "t", eid)
+    assert [n["text"] for n in notes] == ["勝ち 146 / 負け 122", "セグ数で層化しても同じ"]  # oldest first
+    assert notes[0]["created_by"] == "tester" and notes[0]["note_id"] == first["note_id"]
+    assert evals.get_run(st, "t", eid)["notes"] == notes
+    assert evals.get_run(st, "t", eid)["report_md"] == ""      # the result itself is untouched
+
+
+def test_an_empty_note_is_refused(tmp_path):
+    st = _st(tmp_path)
+    ds.create_dataset(st, DS, created_by="t")
+    ds.append(st, "d", [{"id": "a", "v": 1}], created_by="t", input={})
+    evals.create_eval_table(st, TABLE)
+    eid = evals.create_run(st, "t", dataset="d", evaluator_version="v1", title="run")
+    with pytest.raises(ValueError):
+        evals.add_note(st, "t", eid, "   ")
+
+
+def test_a_note_needs_a_run_that_exists(tmp_path):
+    st = _st(tmp_path)
+    evals.create_eval_table(st, TABLE)
+    with pytest.raises(FileNotFoundError):
+        evals.add_note(st, "t", "e_nope", "text")
+
+
+def test_a_run_without_notes_reads_as_none(tmp_path):
+    st = _st(tmp_path)
+    ds.create_dataset(st, DS, created_by="t")
+    ds.append(st, "d", [{"id": "a", "v": 1}], created_by="t", input={})
+    evals.create_eval_table(st, TABLE)
+    eid = evals.create_run(st, "t", dataset="d", evaluator_version="v1", title="run")
+    assert evals.get_notes(st, "t", eid) == []
+
+
 def test_a_run_that_never_finished_can_be_withdrawn_too(tmp_path):
     st = _st(tmp_path)
     ds.create_dataset(st, DS, created_by="t")

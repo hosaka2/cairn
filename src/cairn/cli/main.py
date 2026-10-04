@@ -454,6 +454,26 @@ def eval_withdraw(
     typer.echo(f"withdrew {eval_id} ({note['withdrawn_at']})")
 
 
+@eval_app.command("note")
+def eval_note(
+    table: str,
+    eval_id: str,
+    text: str = typer.Option("", "--text", help="The note. Use --file to read it from a file instead"),
+    file: str = typer.Option("", "--file", help="Read the note from this file ('-' for stdin)"),
+) -> None:
+    """Add free-form text to a run, read with its report.
+
+    For what a person concludes from the numbers: the evaluator writes what it can
+    compute, and scoring refuses to run twice so its result is never rewritten.
+    Notes accumulate; none replaces another.
+    """
+    if bool(text) == bool(file):
+        raise typer.BadParameter("pass exactly one of --text / --file")
+    body = sys.stdin.read() if file == "-" else Path(file).read_text(encoding="utf-8") if file else text
+    note = evals.add_note(_st(), table, eval_id, body, created_by=_who())
+    typer.echo(f"{note['note_id']} ({note['created_at']})")
+
+
 @eval_app.command("show")
 def eval_show(table: str, eval_id: str) -> None:
     run = evals.get_run(_st(), table, eval_id)
@@ -462,6 +482,9 @@ def eval_show(table: str, eval_id: str) -> None:
         typer.echo("\n# result row"); typer.echo(json.dumps(run["row"], ensure_ascii=False, indent=2))
     if run["report_md"]:
         typer.echo("\n# report.md"); typer.echo(run["report_md"])
+    for note in run["notes"]:
+        typer.echo(f"\n# note {note['note_id']} ({note['created_at']}{' ' + note['created_by'] if note['created_by'] else ''})")
+        typer.echo(note["text"])
 
 
 def main() -> None:

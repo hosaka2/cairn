@@ -128,6 +128,12 @@
         </summary>
         <div class="report">
           {% if v.report_html %}{{ v.report_html|safe }}{% else %}<p class="dim">No report.</p>{% endif %}
+          {# Notes come after the evaluator's own text: who wrote each one stays visible. #}
+          {% for n in v.notes %}
+          <hr>
+          <p class="dim mono" style="font-size:11px">note — {{ n.when }}{% if n.who %} · {{ n.who }}{% endif %}</p>
+          {{ n.html|safe }}
+          {% endfor %}
         </div>
       </details>
     {% endif %}
