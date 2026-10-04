@@ -149,6 +149,12 @@ def _cairn_svg(runs_desc: list[dict[str, Any]], primary_col: str | None, latest_
             f'aria-hidden="true">{"".join(parts)}</svg>')
 
 
+def _notes_html(notes: list[dict], table: str, eval_id: str) -> list[dict]:
+    """A run's notes, rendered like the report. Who wrote each one stays next to it."""
+    return [{"when": _fmt_when(n.get("created_at", "")), "who": n.get("created_by", ""),
+             "html": _report_html(n.get("text", ""), table, eval_id)} for n in notes]
+
+
 def _report_html(md: str, table: str, eval_id: str) -> str:
     """Render a report, pointing its relative asset links at the served URLs."""
     if not md:
@@ -396,7 +402,8 @@ def create_app() -> FastAPI:
         if detail:
             view |= {"memo": meta.get("comment") or "",
                      "metadata_json": _metadata_json(meta),
-                     "report_html": _report_html(d["report_md"], table, eval_id)}
+                     "report_html": _report_html(d["report_md"], table, eval_id),
+                     "notes": _notes_html(d["notes"], table, eval_id)}
         return view
 
     @app.get("/evals/{table}", response_class=HTMLResponse)
@@ -520,6 +527,7 @@ def create_app() -> FastAPI:
             "dataset": row.get("dataset", ""),
             "snapshot_id": row.get("snapshot_id", ""),
             "report_html": _report_html(run["report_md"], table, eval_id),
+            "notes": _notes_html(run["notes"], table, eval_id),
         })
 
     # Images referenced by a report are served from here.

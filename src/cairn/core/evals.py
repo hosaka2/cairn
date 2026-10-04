@@ -387,6 +387,7 @@ def get_run(st: Storage, table: str, eval_id: str) -> dict[str, Any]:
         "meta": json.loads(got[meta_path].decode("utf-8")),
         "row": json.loads(got[row_path].decode("utf-8")) if row_path in got else None,
         "report_md": got[report_path].decode("utf-8") if report_path in got else "",
+        "notes": get_notes(st, table, eval_id),
         "predictions": count_predictions(st, table, eval_id),
     }
 
@@ -472,6 +473,35 @@ def _run_markers(st: Storage, table: str) -> tuple[set[str], set[str]]:
     """
     view = runs_view(st, table)
     return set(view.scored), view.withdrawn
+
+
+def add_note(st: Storage, table: str, eval_id: str, text: str, *, created_by: str = "") -> dict[str, Any]:
+    """Add free-form text to a scored run, read with its report.
+
+    An evaluator writes what it can compute; what a person concludes from the numbers
+    comes later and does not fit in `report_md`. Scoring refuses to run twice so a
+    result others may have read is never rewritten, so a note is **its own file** and
+    the result is left alone. Notes accumulate: each is kept with who wrote it and when.
+    """
+    if not str(text).strip():
+        raise ValueError("a note needs text")
+    get_meta(st, table, eval_id)     # a run that does not exist cannot be annotated
+    note = {"note_id": ids.note_id(), "eval_id": eval_id, "text": text,
+            "created_by": created_by, "created_at": now_iso()}
+    st.write_json(f"{_rdir(table, eval_id)}/notes/{note['note_id']}.json", note)
+    return note
+
+
+def get_notes(st: Storage, table: str, eval_id: str) -> list[dict[str, Any]]:
+    """A run's notes, oldest first (the id starts with a timestamp, so the listing sorts)."""
+    import json
+
+    rdir = _rdir(table, eval_id)
+    names = sorted(st.ls(f"{rdir}/notes"))
+    if not names:
+        return []
+    got = st.read_many([f"{rdir}/notes/{n}" for n in names], missing_ok=True)
+    return [json.loads(b.decode("utf-8")) for b in (got.get(f"{rdir}/notes/{n}") for n in names) if b]
 
 
 def withdrawn_runs(st: Storage, table: str) -> set[str]:

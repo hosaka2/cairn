@@ -650,6 +650,31 @@ def test_a_batch_refuses_a_sample_the_run_does_not_have(tmp_path, root):
     assert evals.count_predictions(st, "acc", eid) == 0
 
 
+def test_a_note_can_be_added_from_the_cli(tmp_path, root, monkeypatch):
+    """The analysis of a result is written after it is scored, so it arrives as a note."""
+    st, eid = _started_run(root)
+    _write(tmp_path / "scoring.py", EVALUATOR_MODULE)
+    monkeypatch.chdir(tmp_path)
+    for sid in _ok("eval", "targets", "acc", eid).output.split():
+        _ok("eval", "put-prediction", "acc", eid, "--sample-id", sid,
+            "--file", str(_write(tmp_path / f"{sid}.json", '{"pred": 1}')), "--ext", "json")
+    _ok("eval", "score", "acc", eid, "--evaluator", "scoring:Positives")
+
+    _ok("eval", "note", "acc", eid, "--text", "形は勝ち・残差は僅差")
+    _ok("eval", "note", "acc", eid, "--file", str(_write(tmp_path / "n.md", "## 続き\n\n表はこちら")))
+
+    assert [n["text"] for n in evals.get_notes(st, "acc", eid)] == ["形は勝ち・残差は僅差", "## 続き\n\n表はこちら"]
+    out = _ok("eval", "show", "acc", eid).output
+    assert "形は勝ち・残差は僅差" in out and "# note n_" in out
+
+
+def test_a_note_takes_exactly_one_source(tmp_path, root, monkeypatch):
+    st, eid = _started_run(root)
+    monkeypatch.chdir(tmp_path)
+    assert _run("eval", "note", "acc", eid).exit_code != 0                      # neither
+    assert _run("eval", "note", "acc", eid, "--text", "a", "--file", "b").exit_code != 0   # both
+
+
 def test_a_run_can_be_withdrawn_from_the_cli(tmp_path, root, monkeypatch):
     st, eid = _started_run(root)
     _write(tmp_path / "scoring.py", EVALUATOR_MODULE)
