@@ -11,6 +11,11 @@
   <a class="btn btn-p" href="/evals/{{ table }}/run">New run</a>
 </div>
 
+{% if drift %}
+<div class="note"><b>{{ drift|length }}</b><span>columns differ between the code's table.yaml and the registry's copy. Rows already scored follow the registry's.</span></div>
+<dl class="kv">{% for d in drift %}<dd class="mono" style="font-size:11px">{{ d }}</dd>{% endfor %}</dl>
+{% endif %}
+
 <div class="split">
   <div class="rowgap">
     {% if pending %}

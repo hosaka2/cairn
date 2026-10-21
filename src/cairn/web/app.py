@@ -508,6 +508,7 @@ def create_app() -> FastAPI:
             "subject_title": views[0]["title"] if views else "",
             "cmp_ids": cmp_ids, "cmp_choices": cmp_choices, "comparing": len(views) > 1,
             "pending": pending, "started": started,
+            "drift": evals.column_drift(s, table),
         })
 
     # The report on its own, for reading a long one at full width.

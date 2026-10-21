@@ -12,6 +12,7 @@ keep in sync.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import quote, unquote
 
@@ -57,11 +58,59 @@ def create_eval_table(st: Storage, schema: EvalTableSchema | str) -> str:
 
 
 def load_eval_table(st: Storage, table: str) -> EvalTableSchema:
+    """The table's definition. The one in the scripts directory wins over the registry's copy.
+
+    A definition is code, like the evaluator next to it: editing `evals/<table>/table.yaml`
+    should show on the next start, not only on a table created afresh. The registry keeps
+    the copy made at creation for a reader without the scripts, and for `column_drift`.
+    """
+    code = code_eval_table(table)
+    if code is not None:
+        return code
+    return stored_eval_table(st, table)
+
+
+def stored_eval_table(st: Storage, table: str) -> EvalTableSchema:
+    """The copy the registry made when the table was created."""
     try:
         raw = st.read_fixed(f"{_tdir(table)}/table.yaml")
     except FileNotFoundError:
         raise FileNotFoundError(f"no eval table '{table}' in this registry") from None
     return parse_eval_table(raw.decode("utf-8"))
+
+
+def code_eval_table(table: str) -> EvalTableSchema | None:
+    """`evals/<table>/table.yaml` in the scripts directory, if there is one."""
+    from cairn import scripts
+
+    path = Path(scripts.root()) / "evals" / table / "table.yaml"
+    if not path.is_file():
+        return None
+    schema = parse_eval_table(path.read_text(encoding="utf-8"))
+    if schema.name != table:
+        raise ValueError(f"{path} defines table '{schema.name}', not '{table}'")
+    return schema
+
+
+def column_drift(st: Storage, table: str) -> list[str]:
+    """Columns whose name or type differ between the scripts' definition and the registry's.
+
+    Rows already scored follow the registry's columns. A column renamed or retyped in the
+    code leaves those rows without it, so the page says so instead of showing blanks.
+    """
+    code = code_eval_table(table)
+    if code is None:
+        return []
+    try:
+        stored = stored_eval_table(st, table)
+    except FileNotFoundError:
+        return []
+    have = {c.name: c.type for c in stored.columns}
+    want = {c.name: c.type for c in code.columns}
+    out = [f"{n}: only in the code" for n in want if n not in have]
+    out += [f"{n}: only in the registry" for n in have if n not in want]
+    out += [f"{n}: {have[n]} in the registry, {want[n]} in the code" for n in want if n in have and have[n] != want[n]]
+    return out
 
 
 def list_eval_tables(st: Storage) -> list[str]:
