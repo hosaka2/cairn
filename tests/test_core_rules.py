@@ -37,6 +37,54 @@ def test_a_dataset_name_cannot_be_taken_twice(tmp_path):
         ds.create_dataset(st, DS, created_by="t")
 
 
+def _code_table(tmp_path: Path, monkeypatch, text: str, name: str = "t") -> None:
+    d = tmp_path / "scripts" / "evals" / name
+    d.mkdir(parents=True)
+    (d / "table.yaml").write_text(text, encoding="utf-8")
+    monkeypatch.setenv("CAIRN_SCRIPTS", str(tmp_path / "scripts"))
+
+
+def test_the_definition_in_the_code_wins_over_the_registry_copy(tmp_path, monkeypatch):
+    """Editing table.yaml shows on the next start, like editing the evaluator next to it."""
+    st = _st(tmp_path)
+    evals.create_eval_table(st, TABLE)
+    _code_table(tmp_path, monkeypatch, "name: t\ndescription: new words\ncolumns: [{name: score, type: float}]\n")
+    assert evals.load_eval_table(st, "t").description == "new words"
+    assert evals.stored_eval_table(st, "t").description != "new words"
+    assert evals.column_drift(st, "t") == []
+
+
+def test_without_the_code_the_registry_copy_is_read(tmp_path, monkeypatch):
+    st = _st(tmp_path)
+    evals.create_eval_table(st, TABLE)
+    monkeypatch.setenv("CAIRN_SCRIPTS", str(tmp_path / "nowhere"))
+    assert [c.name for c in evals.load_eval_table(st, "t").columns] == ["score"]
+    assert evals.column_drift(st, "t") == []
+
+
+def test_a_code_definition_under_another_name_is_refused(tmp_path, monkeypatch):
+    _code_table(tmp_path, monkeypatch, "name: other\ncolumns: [{name: score, type: float}]\n")
+    with pytest.raises(ValueError, match="defines table 'other'"):
+        evals.code_eval_table("t")
+
+
+def test_columns_that_differ_from_the_registry_are_named(tmp_path, monkeypatch):
+    """Rows already scored follow the registry's columns; the page says which differ."""
+    st = _st(tmp_path)
+    evals.create_eval_table(st, "name: t\ncolumns: [{name: score, type: float}, {name: old, type: int}]\n")
+    _code_table(tmp_path, monkeypatch, "name: t\ncolumns: [{name: score, type: int}, {name: new, type: int}]\n")
+    assert sorted(evals.column_drift(st, "t")) == [
+        "new: only in the code",
+        "old: only in the registry",
+        "score: float in the registry, int in the code",
+    ]
+
+
+def test_a_table_only_in_the_code_has_no_drift(tmp_path, monkeypatch):
+    _code_table(tmp_path, monkeypatch, TABLE)
+    assert evals.column_drift(_st(tmp_path), "t") == []
+
+
 def test_an_eval_table_name_cannot_be_taken_twice(tmp_path):
     st = _st(tmp_path)
     evals.create_eval_table(st, TABLE)
