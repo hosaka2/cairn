@@ -311,13 +311,23 @@ def eval_create_run(
     title: str = typer.Option(..., help="Short name for this run (required)"),
     comment: str = typer.Option("", help="Optional note"),
     config: str = typer.Option("{}", help="Run config as JSON (model version and parameters go here)"),
+    submit: bool = typer.Option(True, help="Hand the run to the table's pipeline.py, if it has one"),
 ) -> None:
-    """Start a run: take an eval_id and pin the snapshot (predictions are written afterwards)."""
+    """Start a run: take an eval_id and pin the snapshot (predictions are written afterwards).
+
+    A table with a `pipeline.py` has the run handed over to it here, as the web does.
+    """
+    from cairn import registry
+    from cairn.runner import submit_run
+
+    st = _st()
     eid = evals.create_run(
-        _st(), table, dataset=dataset,
+        st, table, dataset=dataset,
         evaluator_version=evaluator_version,
         title=title, comment=comment, created_by=_who(), config=json.loads(config),
     )
+    if submit and (pipeline := registry.load_pipeline(table)) is not None:
+        submit_run(st, table, eid, pipeline)
     typer.echo(eid)
 
 
@@ -415,9 +425,22 @@ def eval_score(
     eval_id: str,
     evaluator: str = typer.Option(..., help="'module.path:EvaluatorClass'"),
 ) -> None:
-    """Score the predictions and write the result."""
+    """Score the predictions and write the result.
+
+    A table with a `pipeline.py` that gathers has its predictions gathered first, as the web does.
+    """
+    from cairn import registry
+    from cairn.interfaces.pipeline import NotReady
+    from cairn.runner import collect_run
+
     cls = _load_obj(evaluator)
-    row = evals.score_run(_st(), table, eval_id, cls())
+    st = _st()
+    if (pipeline := registry.load_pipeline(table)) is not None:
+        try:
+            collect_run(st, table, eval_id, pipeline)
+        except NotReady as e:
+            raise typer.BadParameter(f"the pipeline has not finished: {e}") from e
+    row = evals.score_run(st, table, eval_id, cls())
     typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
 
 

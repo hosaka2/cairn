@@ -129,7 +129,7 @@ The bundled manual is served at `/help`, next to anything in your scripts that f
 
 > **cairn never performs the inference.** It issues the run, holds what comes back, and scores it. Running the
 > demo scripts in this process is a command of its own (`cairn eval run`), which is also how you try a script out
-> on a small dataset. Submitting to an orchestrator directly (the `OrchestratorAdapter` protocol) is not wired up yet.
+> on a small dataset. A table's `pipeline.py` hands its runs to an orchestrator and gathers the predictions before Evaluate.
 
 ### What `demo-seed` really puts through (nothing faked)
 

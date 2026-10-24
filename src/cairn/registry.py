@@ -21,6 +21,7 @@ from cairn import scripts
 _INGESTORS: dict[str, Any] = {}                 # dataset -> Ingestor class
 _EVALUATORS: dict[str, dict[str, Any]] = {}      # table -> {version: Evaluator class}
 _INFERENCE: dict[str, dict[str, Any]] = {}       # table -> {runner, process_factory, config}
+_PIPELINES: dict[str, Any] = {}                  # table -> Pipeline class
 _LOADED: set[str] = set()
 _SCANNED: dict[str, tuple] = {}     # script root -> fingerprint of the last scan
 _PROBLEMS: list[dict[str, str]] = []             # contract violations found while scanning
@@ -51,6 +52,14 @@ def register_evaluator(table: str, version: str) -> Callable[[type], type]:
 
 def register_inference(table: str, *, runner: type, process_factory: Callable, config: type) -> None:
     _INFERENCE[table] = {"runner": runner, "process_factory": process_factory, "config": config}
+
+
+def register_pipeline(table: str, cls: type) -> None:
+    _PIPELINES[table] = cls
+
+
+def get_pipeline(table: str) -> Any | None:
+    return _PIPELINES.get(table)
 
 
 def get_ingestor(dataset: str) -> Any | None:
@@ -152,6 +161,15 @@ def load_inference(table: str) -> dict[str, Any] | None:
     return get_inference(table)
 
 
+def load_pipeline(table: str) -> Any | None:
+    """Where a table's runs are handed over, if it says (`pipeline.py`), importing that script and no other."""
+    module_registrations()
+    path = Path(scripts.root()) / "evals" / table / "pipeline.py"
+    if got := _load_one(path, ("PIPELINE",)):
+        register_pipeline(table, got[0])
+    return get_pipeline(table)
+
+
 def load_evaluator(table: str, version: str) -> Any | None:
     """The evaluator of one version, importing that file and no other."""
     module_registrations()
@@ -225,6 +243,7 @@ def _forget(root: str) -> None:
     _INGESTORS.clear()
     _EVALUATORS.clear()
     _INFERENCE.clear()
+    _PIPELINES.clear()
 
 
 def _import_file(path: Any, mod_name: str) -> Any:
@@ -277,7 +296,7 @@ def _load_export(path: Path, mod_name: str, name: str) -> Any | None:
 
 
 def discover(root: str) -> None:
-    """Scan `datasets/<name>/ingest.py` and `evals/<name>/{run,vN}.py` and register what is valid.
+    """Scan `datasets/<name>/ingest.py` and `evals/<name>/{run,pipeline,vN}.py` and register what is valid.
 
     Anything missing or off-contract is recorded in `problems()` rather than dropped.
     """
@@ -299,6 +318,9 @@ def discover(root: str) -> None:
             config = _load_export(run, mod, "CONFIG")
             if runner is not None and factory is not None and config is not None:
                 register_inference(d.name, runner=runner, process_factory=factory, config=config)
+        pipe = d / "pipeline.py"
+        if pipe.exists() and (cls := _load_export(pipe, _mod_name(pipe), "PIPELINE")):
+            register_pipeline(d.name, cls)
         for vf in sorted(d.glob("v*.py")):
             if not _VERSION_FILE.match(vf.stem):
                 _problem(str(vf), "eval versions must be named v1.py, v2.py, … — this file is ignored")

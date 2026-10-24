@@ -92,6 +92,18 @@ def check_config(obj: Any) -> list[str]:
     return []
 
 
+def check_pipeline(obj: Any) -> list[str]:
+    """PIPELINE must be a class with `submit(eval_id, sample_ids, config)`; `collect` is optional."""
+    if not isinstance(obj, type):
+        return ["Assign a class to PIPELINE (not an instance or a function)"]
+    errs: list[str] = []
+    if e := _has_method(obj, "submit", 3):
+        errs.append(e + " — `def submit(self, eval_id, sample_ids, config) -> None`")
+    if hasattr(obj, "collect") and (e := _has_method(obj, "collect", 3)):
+        errs.append(e + " — `def collect(self, eval_id, sample_ids, config) -> Iterable[(sample_id, bytes)]`")
+    return errs
+
+
 # Export name -> (check, where it belongs). Shared by discovery and `cairn check`.
 EXPORTS = {
     "INGESTOR": (check_ingestor, "datasets/<name>/ingest.py"),
@@ -99,6 +111,7 @@ EXPORTS = {
     "RUNNER": (check_runner, "evals/<name>/run.py"),
     "PROCESS_FACTORY": (check_process_factory, "evals/<name>/run.py"),
     "CONFIG": (check_config, "evals/<name>/run.py"),
+    "PIPELINE": (check_pipeline, "evals/<name>/pipeline.py"),
 }
 
 
