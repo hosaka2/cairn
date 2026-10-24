@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import io
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import pyarrow as pa
@@ -42,6 +43,29 @@ def load_schema(st: Storage, name: str) -> DatasetSchema:
     except FileNotFoundError:
         raise FileNotFoundError(f"no dataset '{name}' in this registry") from None
     return parse_dataset_schema(raw.decode("utf-8"))
+
+
+def description(st: Storage, name: str) -> str:
+    """The dataset's description. The one in the scripts directory wins over the registry's copy.
+
+    Prose is code, like the table's (`evals.load_eval_table`): editing it shows on the next
+    start. The columns stay the registry's, because the rows were checked against them.
+    """
+    code = code_schema(name)
+    return (code if code is not None else load_schema(st, name)).description
+
+
+def code_schema(name: str) -> DatasetSchema | None:
+    """`datasets/<name>/schema.yaml` in the scripts directory, if there is one."""
+    from cairn import scripts
+
+    path = Path(scripts.root()) / "datasets" / name / "schema.yaml"
+    if not path.is_file():
+        return None
+    schema = parse_dataset_schema(path.read_text(encoding="utf-8"))
+    if schema.name != name:
+        raise ValueError(f"{path} defines dataset '{schema.name}', not '{name}'")
+    return schema
 
 
 def list_datasets(st: Storage) -> list[str]:

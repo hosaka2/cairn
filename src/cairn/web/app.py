@@ -304,7 +304,7 @@ def create_app() -> FastAPI:
             for c in schema.columns
         ]
         return _render("dataset.html", {
-            **_ctx(s), "tab": "datasets", "name": name, "description": schema.description,
+            **_ctx(s), "tab": "datasets", "name": name, "description": ds.description(s, name),
             "total": total, "preview": preview, "columns": columns, "ingests": ing_view,
             "offset": offset, "page_size": page_size,
             "has_prev": offset > 0, "has_next": offset + page_size < total,
