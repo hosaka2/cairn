@@ -19,7 +19,8 @@ from typing import Any
 VERSION_FILE = re.compile(r"^v\d+$")
 """Eval versions are `v1.py`, `v2.py`, … only — never `validate.py` and friends."""
 
-EXPORTS = {"ingest.py": ("INGESTOR",), "run.py": ("RUNNER", "PROCESS_FACTORY", "CONFIG")}
+EXPORTS = {"ingest.py": ("INGESTOR",), "run.py": ("RUNNER", "PROCESS_FACTORY", "CONFIG"),
+           "pipeline.py": ("PIPELINE",)}
 """What each kind of script file has to name at the top level."""
 
 
@@ -114,6 +115,14 @@ def versions(table: str) -> list[str]:
     return sorted(named | set(registry.get_evaluators(table)))
 
 
+def has_pipeline(table: str) -> bool:
+    """Whether a table hands its runs over (`pipeline.py`, or one CAIRN_REGISTRY named)."""
+    from cairn import registry
+
+    registry.module_registrations()
+    return (Path(root()) / "evals" / table / "pipeline.py").exists() or registry.get_pipeline(table) is not None
+
+
 def problems() -> list[dict[str, str]]:
     """What is visibly wrong with the scripts, short of running them.
 
@@ -128,6 +137,8 @@ def problems() -> list[dict[str, str]]:
     for d in sorted(p for p in (base / "evals").glob("*") if p.is_dir()):
         if (run := d / "run.py").exists():
             out += [{"where": str(run), "what": w} for w in _declares(run, EXPORTS["run.py"])[1]]
+        if (pipe := d / "pipeline.py").exists():
+            out += [{"where": str(pipe), "what": w} for w in _declares(pipe, EXPORTS["pipeline.py"])[1]]
         for vf in sorted(d.glob("v*.py")):
             if not VERSION_FILE.match(vf.stem):
                 out.append({"where": str(vf),

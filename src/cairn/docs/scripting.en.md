@@ -21,6 +21,7 @@ evals/<name>/
   table.yaml      definitions of the columns shown in the list view
   config.py       class Config(BaseModel) — the run form's fields, read the same way
   run.py          RUNNER / PROCESS_FACTORY / CONFIG
+  pipeline.py     PIPELINE = <class> (optional) — hands a run to wherever its inference runs
   v1.py, v2.py …  EVALUATOR = <class> (file name = version of the evaluation method)
 ```
 
@@ -148,6 +149,37 @@ CONFIG = Config
 - When running from the web, `RunSpec.job_name` must be **`"infer"`**.
 - The contents of a prediction are **opaque bytes**. The format is free (JSON, parquet, anything). Only the evaluator reads it.
 - **Returning `None` writes no prediction.** This expresses "that target has no artifact" without failing.
+
+## Pipeline (handing a run over)
+
+Optional. With `evals/<name>/pipeline.py`, **New run** hands the run to wherever its inference runs,
+and **Evaluate** gathers the predictions before scoring them. That is the whole loop from the page, for
+any pipeline: cairn knows nothing about Dagster or Airflow, the class does.
+
+```python
+# evals/scan-anomaly/pipeline.py
+from cairn.interfaces.pipeline import NotReady
+
+class Orchestrator:
+    def submit(self, eval_id: str, sample_ids: list[str], config: dict) -> None:
+        for sid in sample_ids:                     # tag the work with eval_id to trace it back
+            launch_job(sid, config, tags={"cairn/eval_id": eval_id})
+
+    def collect(self, eval_id: str, sample_ids: list[str], config: dict):
+        if not all_jobs_done(eval_id):
+            raise NotReady("12 of 40 jobs still running")   # nothing is scored; press Evaluate later
+        return [(sid, read_result(sid)) for sid in sample_ids]   # (sample_id, bytes)
+
+PIPELINE = Orchestrator
+```
+
+**Contract**: `PIPELINE` is a class with `submit(eval_id, sample_ids, config)`; `collect(eval_id,
+sample_ids, config) -> Iterable[(sample_id, bytes)]` is optional.
+
+- `submit` returns once the work is handed over. Nobody waits here: whoever watches the work presses Evaluate.
+  If it raises, the run is withdrawn (nothing would ever write its predictions) and the page says why.
+- Leave `collect` out when the pipeline writes its predictions itself (`cairn eval put-prediction`).
+- `cairn eval create-run` submits too (`--no-submit` to skip), and `cairn eval score` collects first.
 
 ## Evaluator (evaluation)
 

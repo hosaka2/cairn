@@ -26,6 +26,8 @@ from cairn.core import dataset as ds
 from cairn.core import evals
 from cairn.core.config import load_config
 from cairn.core.storage import Storage
+from cairn.interfaces.pipeline import NotReady
+from cairn.runner import collect_run, submit_run
 from cairn.scaffold import VERSION_RE
 
 _SAMPLE_SCHEMA = """name: my-dataset
@@ -507,7 +509,7 @@ def create_app() -> FastAPI:
             "primary_label": primary_label, "views": views, "table_rows": table_rows,
             "subject_title": views[0]["title"] if views else "",
             "cmp_ids": cmp_ids, "cmp_choices": cmp_choices, "comparing": len(views) > 1,
-            "pending": pending, "started": started,
+            "pending": pending, "started": started, "has_pipeline": scripts.has_pipeline(table),
             "drift": evals.column_drift(s, table),
         })
 
@@ -746,6 +748,14 @@ def create_app() -> FastAPI:
 
         eval_id = evals.create_run(s, table, dataset=dataset, evaluator_version=ev,
                                    title=title, comment=comment, created_by=_who(), config=cfg)
+        if (pipeline := registry.load_pipeline(table)) is not None:
+            try:
+                submit_run(s, table, eval_id, pipeline)
+            except Exception as e:  # whatever the pipeline raised, the run never left
+                # Withdrawn rather than left pending: nothing will ever write its predictions.
+                evals.withdraw_run(s, table, eval_id, created_by=_who(),
+                                   reason=f"submitting to the pipeline failed: {type(e).__name__}: {e}")
+                raise HTTPException(502, f"Submitting to the pipeline failed: {type(e).__name__}: {e}") from e
         return RedirectResponse(f"/evals/{table}?started={eval_id}", status_code=303)
 
     @app.post("/evals/{table}/runs/{eval_id}/score")
@@ -760,6 +770,11 @@ def create_app() -> FastAPI:
         evaluator = registry.load_evaluator(table, version)
         if evaluator is None:
             raise HTTPException(400, f"No evaluator registered for {version or 'this run'}")
+        if (pipeline := registry.load_pipeline(table)) is not None:
+            try:
+                collect_run(s, table, eval_id, pipeline)
+            except NotReady as e:
+                raise HTTPException(409, f"The pipeline has not finished: {e}") from e
         evals.score_run(s, table, eval_id, evaluator())
         return RedirectResponse(f"/evals/{table}?run={eval_id}", status_code=303)
 

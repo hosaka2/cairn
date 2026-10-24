@@ -44,7 +44,11 @@
         </div>
         {% endfor %}
       </div>
+      {% if has_pipeline %}
+      <p class="legend"><span>Started, not evaluated yet. Handed to the pipeline when started; Evaluate gathers its predictions once it has finished</span></p>
+      {% else %}
       <p class="legend"><span>Started, not evaluated yet. The inference writes predictions with <span class="mono">cairn eval put-prediction</span></span></p>
+      {% endif %}
     </div>
     {% endif %}
 

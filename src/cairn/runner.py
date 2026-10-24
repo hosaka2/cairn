@@ -1,10 +1,12 @@
-"""Performing a started run in this process.
+"""Getting a started run's predictions: from a pipeline, or by performing it in this process.
 
-A real pipeline runs its inference wherever it runs, and writes predictions against the
-`eval_id` cairn handed it. This is the other case: a script registered for the table, small
-enough to run right here — the demo, or a script you are trying out.
+A real pipeline runs its inference wherever it runs. A table's `pipeline.py` hands the run
+over when it starts (`submit_run`) and gathers the predictions before it is scored
+(`collect_run`); a pipeline may instead write them itself with `cairn eval put-prediction`.
 
-Reached only from `cairn eval run`: the web never performs a run.
+The other case is a script registered for the table, small enough to run right here — the
+demo, or a script you are trying out (`run_inference`, reached only from `cairn eval run`).
+The web never performs a run: it only hands one over.
 """
 
 from __future__ import annotations
@@ -36,4 +38,25 @@ def run_inference(st: Storage, table: str, eval_id: str, inference: dict[str, An
     adapter = InlineAdapter(st, table, eval_id, jobs={"infer": inference["process_factory"](rows_by_id)})
     for spec in specs:
         adapter.submit(spec, tags={"cairn/eval_id": eval_id})
+    return evals.count_predictions(st, table, eval_id)
+
+
+def submit_run(st: Storage, table: str, eval_id: str, pipeline: type) -> None:
+    """Hand a started run to its pipeline, with the samples it is pinned to and its config."""
+    config = evals.get_meta(st, table, eval_id).get("config") or {}
+    pipeline().submit(eval_id, evals.target_ids(st, table, eval_id), config)
+
+
+def collect_run(st: Storage, table: str, eval_id: str, pipeline: type) -> int | None:
+    """Write what the pipeline gathered as the run's predictions. None if it does not gather.
+
+    `NotReady` from the pipeline passes through, and nothing is written.
+    """
+    p = pipeline()
+    if not hasattr(p, "collect"):
+        return None
+    evals.ensure_writable(st, table, eval_id)
+    config = evals.get_meta(st, table, eval_id).get("config") or {}
+    preds = list(p.collect(eval_id, evals.target_ids(st, table, eval_id), config))
+    evals.write_predictions(st, table, eval_id, preds, "bin")
     return evals.count_predictions(st, table, eval_id)

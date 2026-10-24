@@ -48,7 +48,9 @@ In the eval list, **runs stack up as stones** (stone width = primary metric).
 4. **New run** — set the title (required), dataset, evaluation method, and config, and issue it.
    cairn does not perform the inference: the run waits under **Running** until predictions are
    written against it (see 5). With the demo scripts, `cairn eval run <table> <eval_id>` writes them.
-5. **Evaluate** — press it on the waiting run once the predictions are in. The result is stacked as a stone.
+   A table with a `pipeline.py` hands the run over here instead.
+5. **Evaluate** — press it on the waiting run once the predictions are in (with a `pipeline.py`, once the
+   work has finished: it gathers them first). The result is stacked as a stone.
 6. **Compare** — select a run and choose "compare with another run". Rows are added to the result table and
    differences show up colored (blue = better direction / red = worse direction; the direction is each column's `direction`).
 
@@ -74,6 +76,9 @@ The run appears under **Running** on the eval page from step 1, with an **Evalua
 evaluator for its version is registered. How far the jobs have got is the orchestrator's business, not
 the ledger's; cairn only knows the run started and has no result yet. The snapshot is pinned at step
 1, so appending to the dataset while the jobs run does not change what this run is measured on.
+
+With a `pipeline.py` for the table (see the scripting guide), steps 1–3 shrink to **New run** and
+**Evaluate**: the run is submitted when it starts, and the predictions are gathered before scoring.
 
 Predictions are opaque bytes: only the evaluator of that table reads them. `--jsonl` writes a batch of
 `{"sample_id": …, "prediction": …}` lines in one call. Both forms refuse a run that is already

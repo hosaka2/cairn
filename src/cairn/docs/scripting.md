@@ -21,6 +21,7 @@ evals/<name>/
   table.yaml      一覧に出す列の定義
   config.py       class Config(BaseModel) — 実行フォームの項目。同じく読まれるだけ
   run.py          RUNNER / PROCESS_FACTORY / CONFIG
+  pipeline.py     PIPELINE = <class>（任意）— 実行を推論の実行先へ渡す
   v1.py, v2.py …  EVALUATOR = <class>（ファイル名 = 評価方法の版）
 ```
 
@@ -148,6 +149,37 @@ CONFIG = Config
 - web から実行する場合、`RunSpec.job_name` は **`"infer"`** にしてください。
 - 予測の中身は**不透明なバイト列**。形式は自由（JSON でも parquet でも）。読むのは評価器だけです。
 - **`None` を返すと予測を書きません**。「その対象は成果物が無い」を落とさずに表現できます。
+
+## Pipeline（実行先へ渡す）
+
+任意です。`evals/<name>/pipeline.py` があると、**New run** で実行を推論の実行先へ渡し、**Evaluate** で
+採点の前に予測を集めます。画面だけで一周でき、どんなパイプラインでも同じ形です（Dagster や Airflow を知るのは
+cairn ではなくこのクラス）。
+
+```python
+# evals/scan-anomaly/pipeline.py
+from cairn.interfaces.pipeline import NotReady
+
+class Orchestrator:
+    def submit(self, eval_id: str, sample_ids: list[str], config: dict) -> None:
+        for sid in sample_ids:                     # eval_id を付けておくと辿れる
+            launch_job(sid, config, tags={"cairn/eval_id": eval_id})
+
+    def collect(self, eval_id: str, sample_ids: list[str], config: dict):
+        if not all_jobs_done(eval_id):
+            raise NotReady("40 件中 12 件が実行中")   # 何も採点しない。後で Evaluate を押し直す
+        return [(sid, read_result(sid)) for sid in sample_ids]   # (sample_id, bytes)
+
+PIPELINE = Orchestrator
+```
+
+**契約**: `PIPELINE` は `submit(eval_id, sample_ids, config)` を持つクラス。`collect(eval_id, sample_ids,
+config) -> Iterable[(sample_id, bytes)]` は任意。
+
+- `submit` は渡し終えたらすぐ戻ります。ここでは待ちません。終わったかは実行を見ている人が判断して Evaluate を押します。
+  例外を出すと、その実行は取り下げられ（予測を書く者がいないため）、画面に理由が出ます。
+- パイプラインが自分で予測を書く（`cairn eval put-prediction`）なら `collect` は省きます。
+- `cairn eval create-run` も渡します（`--no-submit` で渡さない）。`cairn eval score` は先に集めます。
 
 ## Evaluator（評価）
 
