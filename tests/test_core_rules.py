@@ -62,6 +62,34 @@ def test_without_the_code_the_registry_copy_is_read(tmp_path, monkeypatch):
     assert evals.column_drift(st, "t") == []
 
 
+def test_the_dataset_description_in_the_code_wins_but_the_columns_stay(tmp_path, monkeypatch):
+    """Prose is code; the columns are the registry's, since the rows were checked against them."""
+    st = _st(tmp_path)
+    ds.create_dataset(st, DS, created_by="t")
+    d = tmp_path / "scripts" / "datasets" / "d"
+    d.mkdir(parents=True)
+    (d / "schema.yaml").write_text("name: d\ndescription: new words\nkey: id\ncolumns: [{name: id, type: str}]\n")
+    monkeypatch.setenv("CAIRN_SCRIPTS", str(tmp_path / "scripts"))
+    assert ds.description(st, "d") == "new words"
+    assert [c.name for c in ds.load_schema(st, "d").columns] == ["id", "v"]
+
+
+def test_without_the_code_the_dataset_description_is_the_registry_copy(tmp_path, monkeypatch):
+    st = _st(tmp_path)
+    ds.create_dataset(st, "name: d\ndescription: stored\nkey: id\ncolumns: [{name: id, type: str}]\n")
+    monkeypatch.setenv("CAIRN_SCRIPTS", str(tmp_path / "nowhere"))
+    assert ds.description(st, "d") == "stored"
+
+
+def test_a_code_dataset_under_another_name_is_refused(tmp_path, monkeypatch):
+    d = tmp_path / "scripts" / "datasets" / "d"
+    d.mkdir(parents=True)
+    (d / "schema.yaml").write_text("name: other\nkey: id\ncolumns: [{name: id, type: str}]\n")
+    monkeypatch.setenv("CAIRN_SCRIPTS", str(tmp_path / "scripts"))
+    with pytest.raises(ValueError, match="defines dataset 'other'"):
+        ds.code_schema("d")
+
+
 def test_a_code_definition_under_another_name_is_refused(tmp_path, monkeypatch):
     _code_table(tmp_path, monkeypatch, "name: other\ncolumns: [{name: score, type: float}]\n")
     with pytest.raises(ValueError, match="defines table 'other'"):

@@ -669,7 +669,7 @@ def test_a_note_can_be_added_from_the_cli(tmp_path, root, monkeypatch):
 
 
 def test_a_note_takes_exactly_one_source(tmp_path, root, monkeypatch):
-    st, eid = _started_run(root)
+    _st, eid = _started_run(root)
     monkeypatch.chdir(tmp_path)
     assert _run("eval", "note", "acc", eid).exit_code != 0                      # neither
     assert _run("eval", "note", "acc", eid, "--text", "a", "--file", "b").exit_code != 0   # both
