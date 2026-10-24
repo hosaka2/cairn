@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cairn core/ — 実装理解</title>
+<style>
+  :root {
+    --bg: #faf9f7; --surface: #fff; --border: #e3e1dc;
+    --text: #23221f; --muted: #6e6c66;
+    --ok-bg: #eaf3de; --ok-fg: #3b6d11;
+    --guess-bg: #faeeda; --guess-fg: #854f0b;
+    --todo-bg: #fcebeb; --todo-fg: #a32d2d;
+    --note-bg: #e6f1fb; --note-fg: #185fa5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a18; --surface: #232320; --border: #3a3a36;
+      --text: #e8e6e0; --muted: #9c9a92;
+      --ok-bg: #27500a; --ok-fg: #c0dd97;
+      --guess-bg: #633806; --guess-fg: #fac775;
+      --todo-bg: #791f1f; --todo-fg: #f7c1c1;
+      --note-bg: #0c447c; --note-fg: #b5d4f4;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.5rem 4rem; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7; font-size: 15px;
+  }
+  main { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 24px; font-weight: 500; margin: 0 0 .25rem; }
+  h2 { font-size: 18px; font-weight: 500; margin: 2.5rem 0 .75rem; }
+  h3 { font-size: 15px; font-weight: 500; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 2rem; }
+  .overview { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: .75rem; }
+  .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .tag { font-size: 12px; padding: 3px 10px; border-radius: 6px; white-space: nowrap; }
+  .tag.ok { background: var(--ok-bg); color: var(--ok-fg); }
+  .tag.guess { background: var(--guess-bg); color: var(--guess-fg); }
+  .tag.todo { background: var(--todo-bg); color: var(--todo-fg); }
+  .cat { color: var(--muted); font-size: 13px; margin: 2px 0 12px; }
+  .field { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+  .field:first-of-type { border-top: none; }
+  .label { color: var(--muted); font-size: 13px; display: block; }
+  .refs { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .refs a {
+    font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+    text-decoration: none; color: var(--note-fg);
+  }
+  .refs a:hover { border-color: var(--muted); }
+  .note { background: var(--note-bg); border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: .75rem; }
+  .note .label { color: var(--note-fg); }
+  footer { color: var(--muted); font-size: 13px; margin-top: 3rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+  .inf { color: var(--muted); font-size: .92em; }
+  .note h3 { color: var(--note-fg); }
+  .note p { margin: .5rem 0; }
+  .card p, .field p { margin: .4rem 0; }
+  .warn { border-left: 3px solid var(--todo-fg); padding-left: .8rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>cairn <code>core/</code> — 追記専用ストレージ層</h1>
+  <p class="sub">cairn / 98f23d6 &nbsp;·&nbsp; 対象: <code>src/cairn/core/</code>（9ファイル・約1,300行）&nbsp;·&nbsp; リンクは VS Code で開きます</p>
+
+  <div class="overview">
+<p><code>src/cairn/core/</code> は、cairn が「プラットフォームとして固定する部分」— オブジェクトストレージ上の追記専用台帳そのものです。DB もロックサービスも使わず、S3 / GCS / ローカルの <code>file://</code> を fsspec 経由で同じコードから叩きます。</p>
+<p>データセットは <code>rows/{ulid}.json</code> への追記ログで、現在の状態はそれを ULID 順に適用した結果（upsert と tombstone、last write wins）。評価は「run を作る＝データセットのスナップショットを固定する」→「予測が別プロセスから書き戻される」→「採点して <code>result/row.json</code> を書く」の三段で、<b>その row.json が在るかどうかだけが「評価済みか」を決めます</b>。</p>
+<p>読み出しは二経路。行ファイルが parquet チェックポイントに全部覆われているときだけ DuckDB で直接ページングし、1件でも覆われていない行ファイルがあれば Python で全ログを畳みます。</p>
+<p>この層の判断はほぼすべて「S3 にはロックが無い」という一点から派生していて、その代償はロックではなく <b>ゴミ集め（vacuum）と全ログ再生のコスト</b> に付け替えられています。</p>
+</div>
+
+  <div class="note" style="margin-top:.75rem">
+    <span class="label">この一覧の確度について</span>
+    
+<p><b>この範囲には履歴がありません。</b> リポジトリのコミットは <code>98f23d6</code> 一つだけ（スカッシュ済み）で、fix / revert / perf のコミットも、バグ修正の差分も存在しません。会話ログも渡されていません。</p>
+<p>ただしこのコードベースは珍しく、<b>理由が docstring とコメントに直接書かれています</b>。テスト名も「何を拒むか」を文章で述べる形式です。そのため下のカードの多くは <code>コード確認済み</code> になっていますが、それは「コード中に理由が書いてある」という意味であって、「その理由が当時の実際の動機だった」ことの証明ではありません。</p>
+
+  </div>
+
+  <h2>起動と初期化</h2>
+  <article class="card">
+    <div class="card-head"><h3>「一度しか書かれないファイル」だけをインスタンス内で覚え、listing は明示的に覚えない</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">起動と初期化</p>
+    <div class="field"><span class="label">選んだ方式</span><code>read_fixed</code> は schema.yaml / table.yaml をインスタンスの <code>_fixed</code> に溜める。<code>remember</code> は一括取得した結果を後から流し込む（<code>list_datasets</code> / <code>list_eval_tables</code> が使う）。一方 fsspec の listing キャッシュは <code>use_listings_cache=False</code> で<b>明示的に切ってある</b>。</div>
+    <div class="field"><span class="label">理由</span>両方 docstring に明記。前者「schema と eval table は作られたら書き換えられず、1ページが同じものを何度も読む。Storage は1リクエスト／1コマンドしか生きないので、listing を覚えるのと違って陳腐化しえない」。後者「別プロセスが同じレジストリに追記するので、キャッシュされた listing は長命な読者（web）を起動時に存在した run へ釘付けにする」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>キャッシュの寿命が <code>Storage</code> インスタンスの寿命に完全に依存している。web は <code>st()</code> が毎回 <code>Storage(load_config().root)</code> を新規に作るので、リクエストをまたいだ再利用は無い＝<b>毎リクエストで schema を読み直し、<code>load_config()</code> も毎回走る</b>。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span><code>Storage</code> を長命にする使い方（スクリプトが1つ作って回し続ける）をすると、「schema.yaml は一度しか書かれない」という前提が破れたとき — 誰かが直接書き換えたとき — に古いスキーマで検証し続ける。最初に出る症状は、スキーマを直したのに検証エラーが変わらないこと。プロセス再起動で直るので、再現しない不具合として扱われやすい。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:41">storage.py:Storage.__init__</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:120">storage.py:read_fixed</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:131">storage.py:remember</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:39">dataset.py:load_schema</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/web/app.py:1">app.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>重い依存の import を関数の中に下ろしている（ただし一貫していない）</h3><span class="tag guess">推測</span></div>
+    <p class="cat">起動と初期化</p>
+    <div class="field"><span class="label">選んだ方式</span><code>duckdb</code> を使う <code>query</code> は <code>rows_page</code> / <code>count_rows</code> の中で import。<code>pyarrow</code> は <code>evals._metrics_parquet</code> の中。<code>yaml</code> は <code>dataset._dump_schema</code> と <code>evals.create_eval_table</code> の中。一方 <code>dataset.py</code> は<b>先頭で pyarrow を通常 import</b> しており、<code>json</code> や <code>datetime</code> の関数内 import も混ざる。</div>
+    <div class="field"><span class="label">理由</span><b>書かれていない。</b> duckdb / pyarrow については「使わない経路では import コストを払わない」という説明が自然に付くが、コード側の根拠は無い。そして <code>json</code> の関数内 import はその説明では説明できない（コストの無い標準ライブラリで、同じファイルの他所では先頭 import している）。<b>この理由は推測であって、確認された事実ではない。</b></div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>どのモジュールが何に依存しているかが、先頭を見ても分からない。<code>dataset.py</code> は先頭で pyarrow を import しているので、遅延 import の効果は dataset を触った時点で消える。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>duckdb / pyarrow が入っていない環境でも import は通り、<code>rows_page</code> を呼んだ瞬間に初めて ImportError になる。最初に出る症状は、CLI の起動やデータセット作成は成功するのに<b>一覧ページを開いたときだけ</b>落ちること。依存漏れが起動時ではなく利用時に出る。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:280">dataset.py:rows_page</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:295">dataset.py:count_rows</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:227">evals.py:score_run</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:1">dataset.py</a></div>
+  </article>
+  <h2>並行性</h2>
+  <article class="card">
+    <div class="card-head"><h3>ロックを捨て、「新しいキーしか書かない」で衝突そのものを消した</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">並行性</p>
+    <div class="field"><span class="label">選んだ方式</span>書き込みは必ず新しいキーを作る（<code>rows/{ulid}.json</code>、<code>ingests/{ingest_id}.json</code>、<code>manifest/{ulid}.parquet</code>）。削除も上書きではなく墓標 <code>{"op":"delete"}</code> の追記。既存キーへの上書きは、run の <code>_meta.json</code> 更新・予測ファイル・vacuum の3つしか無い。</div>
+    <div class="field"><span class="label">理由</span>モジュール docstring と README「Lock-free」節に明記。CAS もリースも DynamoDB も要らなくするため。S3 が保証するのは PUT の原子性だけで compare-and-swap は持たないので、「上書きしない」を守れば排他が要らなくなる、という取引。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>現在の状態を知るのに必ず全ログの再生が要る（<code>merge</code>）。真実が一箇所になく、<code>rows/</code> を全部読むまで「今何行あるか」すら分からない。そのために checkpoint と snapshot という派生物が必要になり、そのぶんキー数と GC の面倒が増える。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>追記が増えるほど <code>merge</code> の時間とメモリが、行数ではなく <b>追記回数 × その回の ops 数</b> に比例して伸びる。最初に出る症状は、一覧より先に <code>cairn eval create-run</code> が遅くなること — <code>create_run</code> が <code>snapshot</code> を呼び、それが全マージを含むため。<span class="inf">（構造からの推論。実測値ではない）</span></div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:1">dataset.py</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:98">dataset.py:_write_ops</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:157">dataset.py:merge</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:92">dataset.py:delete_rows</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>ULID の下位80ビットを、乱数ではなく単調カウンタにした</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">並行性</p>
+    <div class="field"><span class="label">選んだ方式</span>同一ミリ秒内では tail を引き直さず <code>+1</code>。時計が巻き戻ったら <code>_LAST_MS</code> を据え置いてやはり <code>+1</code>。新しいミリ秒に入った時だけ <code>os.urandom(10) &gt;&gt; 1</code> で引き直す（最上位ビットを落として、桁上がりがタイムスタンプ部に食い込まないようにしてある）。排他はプロセス内の <code>threading.Lock</code>。</div>
+    <div class="field"><span class="label">理由</span>docstring に明記。「rows は ULID 順にマージされるので、キー順＝書き込み順でなければ last write wins が意味を持たない」。乱数のままだと <b>連続4回のうち2回が逆順になった</b>、と docstring が具体的に書いている。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>順序が保証されるのは1プロセス内だけ。<code>_LOCK</code> はプロセスローカルなので、web を複数ワーカーで動かす／複数ジョブが同じデータセットに書く、といった構成では順序は決まらない（docstring も「それらは元々順序づけられていない」と割り切っている）。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>「同じ行への upsert と delete が、別プロセスから同一ミリ秒に出る」と順序が不定になり、削除したはずの行が残る（またはその逆）。最初に出る症状は、削除が効いたり効かなかったりする非決定性で、<b>単一プロセスのテストでは絶対に再現しない</b>。規模ではなくデプロイ形態（ワーカー数、同時に書くジョブ数）で入る条件。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/ids.py:32">ids.py:ulid</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/ids.py:27">ids.py:_LOCK</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_core_rules.py:1">test_core_rules.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>一覧の並行化は、固定8スレッドの ThreadPoolExecutor だけ</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">並行性</p>
+    <div class="field"><span class="label">選んだ方式</span><code>each</code> は項目ごとの独立な取得を最大8並列で回し、順序を保つ（項目が2未満なら順次）。<code>both</code> は無関係な数件を同時に。</div>
+    <div class="field"><span class="label">理由</span>docstring に明記。「バケット相手の一覧は大半がネットワーク待ちで、作業項目同士は触れ合わない」。8 は「レイテンシを隠すには十分、ストアに礼儀正しくいるには少ない」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>8 は環境変数でもチューニングできない固定値。GIL 下のスレッドなので CPU 側（JSON デコード、マージ）は並列化されず、待ちしか隠れない。そして <b><code>core/</code> 自身はこれを使っていない</b> — 呼ぶのは web/app.py と cli/main.py だけなので、core の関数を直接呼ぶ利用者に恩恵は無い。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>データセットやテーブルが数百個になると、8並列でも一覧が線形に伸びる。最初に出る症状は <code>/datasets</code> と <code>/evals</code> の<b>初回表示だけ</b>が遅くなること（個別ページは1件しか引かないので変わらない）。逆に各項目の処理が重い場合は、8本が同時に全ログをメモリへ載せるので、遅さより先にメモリが問題になる。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/concurrent.py:21">concurrent.py:each</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/concurrent.py:29">concurrent.py:both</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/concurrent.py:17">concurrent.py:WORKERS</a></div>
+  </article>
+  <h2>アルゴリズムとデータ構造</h2>
+  <article class="card">
+    <div class="card-head"><h3>checkpoint は16ファイルごと。速い読み出し経路はその直後だけ</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">アルゴリズムとデータ構造</p>
+    <div class="field"><span class="label">選んだ方式</span><code>CHECKPOINT_EVERY = 16</code>。追記のたびに「未カバーの行ファイル数 ≥ 16」を判定し、超えたら全行を畳んだ parquet を書く。読み出し（<code>rows_page</code> / <code>count_rows</code>）は<b>未カバーが0件のときだけ</b> DuckDB のページングを使い、1件でも残っていれば Python の全マージに落ちる。</div>
+    <div class="field"><span class="label">理由</span>定数の docstring に明記。「毎回 checkpoint すると取り込みが二次オーダーになる。間の読み出しは未カバーの行ファイルをマージすることで正しさを保つ」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>checkpoint 直後に1回でも追記が入ると未カバーが1件になるので、<b>実運用のほとんどの時間で読み出しは全マージ経路</b>にいる。「メモリに載せずにページングする」という DuckDB 導入の狙いは、16回に1回訪れる窓の中でしか働いていない。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>行数が増えると、一覧の1ページ目を出すのに全行をメモリへ載せる。最初に出る症状は、データセット詳細ページの<b>初回表示だけ</b>が重くなり、しかも offset を進めても軽くならない（ページ送りが速くならない）こと。加えて追記16回ごとに全データを畳み直す parquet 書き込みが挟まるので、取り込みのレイテンシが周期的に跳ねる。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:206">dataset.py:CHECKPOINT_EVERY</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:214">dataset.py:_needs_checkpoint</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:219">dataset.py:write_checkpoint</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:280">dataset.py:rows_page</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:295">dataset.py:count_rows</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_core_rules.py:1">test_core_rules.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>マージは辞書1つへの全再生。未知の op は黙って飛ばす</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">アルゴリズムとデータ構造</p>
+    <div class="field"><span class="label">選んだ方式</span><code>merge</code> は行ファイルを ULID 順に読み、<code>upsert</code> なら <code>state[key] = row</code>、<code>delete</code> なら <code>pop</code>。それ以外の op には <code>else</code> が無く、何も起きない。</div>
+    <div class="field"><span class="label">理由</span>テストが理由を書いている（<code>test_an_operation_from_a_newer_writer_is_skipped</code>：「rows は追記専用なので、未知の op は致命傷ではなく無視されるべき」）。新しいバージョンの writer が書いた op を、古い reader が読んでも死なないようにするため。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>前方互換のために、<b>壊れた op も黙って飛ぶ</b>。<code>{"op": "upset"}</code> というタイプミスは書き込み時も読み出し時も一切エラーにならず、行がただ入らない。<code>append</code> はスキーマ検証を通った行しか op にしないので自前の経路では起きないが、<code>rows/</code> へ直接書く経路（テスト、外部ツール）では起きる。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>別バージョンの cairn が新しい op（範囲削除など）を書き、古いバージョンがそれを飛ばすと、両者で「今のデータ」が食い違う。最初に出る症状は行数の不一致で、<b>どちらもエラーを出さない</b>ので、気づくのは snapshot_id が期待と違うときになる。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:157">dataset.py:merge</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_core_rules.py:1">test_core_rules.py</a></div>
+  </article>
+  <h2>I/O とネットワーク</h2>
+  <article class="card">
+    <div class="card-head"><h3>「1件ずつ聞く」を全面的に禁じ、集合で取りに行く</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">I/O とネットワーク</p>
+    <div class="field"><span class="label">選んだ方式</span>既知のキー集合は <code>read_many</code>（fsspec の <code>fs.cat</code> に全パスを渡す）で一括取得する。<code>_state</code> は run の4ファイルを1回、<code>runs_view</code> は全 run の row.json を1回、<code>list_datasets</code> / <code>list_eval_tables</code> は全 schema を1回。<b><code>exists()</code> で確かめてから読む、はしない</b> — <code>missing_ok=True</code> で「返ってこなかったキー」を存在確認そのものに使う。</div>
+    <div class="field"><span class="label">理由</span>各所の docstring に繰り返し明記。「バケット相手では読み取り1回がネットワーク往復1回で、順に並べるとページが待つ」「『あるか？』を聞くと往復が倍になる」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>取ってきたものは全部メモリに載る。<code>runs_view</code> はテーブルの全 run の結果行を、<code>merge</code> は全行ファイルを、同時に持つ。この層の一括取得にページングという概念が無い。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>1テーブルの run が数千件になると、一覧を1ページ出すために全 run の row.json をメモリへ広げる。最初に出る症状は <code>/evals/&lt;table&gt;</code> の初回表示の時間とメモリで、run 詳細は1件しか引かないので変わらない。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:135">storage.py:read_many</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:129">evals.py:_state</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:424">evals.py:runs_view</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:47">dataset.py:list_datasets</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>「読めなかったキー」と「無いキー」を、絶対に混ぜない</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">I/O とネットワーク</p>
+    <div class="field"><span class="label">選んだ方式</span><code>fs.cat(..., on_error="return")</code> で各キーの例外を受け取り、<code>missing_ok</code> のときだけ <code>FileNotFoundError</code> を捨てる。それ以外の例外は必ず再送出する。</div>
+    <div class="field"><span class="label">理由</span>コメントに明記。「省略すると、バケットが読み取りを拒否したことが『そのファイルは無い』になり、<b>評価された run が評価されていない run として読まれる</b>」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>一括取得のコードが素直に書けず、パス↔相対パスの逆引き辞書を挟む必要がある。また、1キーでも権限エラーがあればページ全体が落ちる（それが狙いだが、部分的な劣化を選ぶ余地が無い）。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>IAM ポリシーの変更で一部プレフィックスだけ 403 になると、そのテーブルの一覧が丸ごと 500 になる。最初に出る症状は、一部の run ではなく<b>ページ全体</b>が出なくなること — 「壊れているのは1つだけ」という手がかりが画面に残らない。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:135">storage.py:read_many</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_hardening.py:1">test_hardening.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>「読み飛ばしてよい壊れ方」を一覧に限定した</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">I/O とネットワーク</p>
+    <div class="field"><span class="label">選んだ方式</span><code>read_many_json</code> の <code>skip_unreadable</code> は既定 False。一覧系（<code>list_ingests</code>、<code>runs_view</code>、<code>pending_runs</code>）だけが True を渡し、採点が読む行データは False のまま。</div>
+    <div class="field"><span class="label">理由</span>docstring に明記。「一覧では、ストアに何かが書いた1ファイルがページ全体を画面から消してはならない。<b>中身が答えそのものである場所 — run が採点された行 — では、黙って落とすと測ったものが変わってしまう</b>ので off のまま」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>一覧では壊れたファイルが警告もログも無く消える。<code>runs_view</code> は結果を読めない run を running として表示するのでそちらは画面に残るが、<code>list_ingests</code> の取り込み履歴は<b>本当に黙って消える</b>。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>取り込み記録の JSON が1件壊れると、その取り込みだけが履歴から消え、しかし <code>rows/</code> の行は生きているので行数は合う。最初に出る症状は「行はあるのに、いつ誰が入れたか分からない行がある」という状態で、差分に気づく手段が画面に無い。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:160">storage.py:read_many_json</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:142">dataset.py:list_ingests</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:424">evals.py:runs_view</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_hardening.py:1">test_hardening.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>ローカルだけ一時ファイル経由、オブジェクトストアは直接 PUT</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">I/O とネットワーク</p>
+    <div class="field"><span class="label">選んだ方式</span><code>write_bytes</code> は <code>file://</code> のとき <code>{path}.tmp-{ulid}</code> に書いて <code>mv</code> する。リモートはそのまま open→write。<code>write_many</code> はリモートだけ <code>fs.pipe</code> の一括、ローカルは1件ずつ（＝一時ファイル経由を保つ）。<code>makedirs</code> の失敗は握り潰す。</div>
+    <div class="field"><span class="label">理由</span>コメントに明記。「ローカルの書き込みは原子的でないので、読者が半端なファイルを見うる。オブジェクトストアは PUT を原子的に公開するので一時ファイルは要らない」。makedirs を握り潰すのは「オブジェクトストアにディレクトリが無い」ため（pyproject で ruff の S110 を明示的に無効化してある）。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>ローカルでは書き込みが常に2倍のファイル操作になり、一括書き込みの高速化を諦めている。そして <code>.tmp-{ulid}</code> が残る経路がある — mv の前に落ちるとゴミが残り、vacuum は checkpoint しか見ないので誰も消さない。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span><b>実測して確認した：</b> <code>rows/</code> に残った tmp ファイルは <code>files()</code> の分類を素通りする（<code>manifest</code> は <code>.json</code> で絞っているが <code>rows</code> は拡張子を見ない）。結果、<code>merge</code> がそれを読んで <code>ValueError: … is not readable JSON</code> を投げ、<b>そのデータセットが読めなくなる</b>。最初に出る症状は、該当データセットの一覧・run 作成・採点が揃って同じ ValueError で落ちること。他のデータセットは無事なので原因が絞りやすい一方、復旧は手でファイルを消すしかない。<br>リモート側では、<code>write_many</code> の途中で落ちると一部だけが上がる（一括でも原子的ではない）。<code>score_run</code> はそれを見越して row.json を最後に分けているが、<code>rescore</code> の予測コピーには同じ保護が無く、予測が部分的にコピーされた新 run ができる。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:82">storage.py:write_bytes</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:104">storage.py:write_many</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:127">dataset.py:files</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:309">evals.py:rescore</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_core_rules.py:1">test_core_rules.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>予測は64件ずつ — 中身が画像でもありうるから</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">I/O とネットワーク</p>
+    <div class="field"><span class="label">選んだ方式</span><code>PREDICTION_BATCH = 64</code>。<code>_prediction_loader</code> は listing を64件ずつ切って <code>read_many</code> し、ジェネレータとして1件ずつ yield する。<code>rescore</code> のコピーも同じ刻み。</div>
+    <div class="field"><span class="label">理由</span>定数の docstring に明記。「1往復あたりに取る予測数。ペイロードは画像でもありうるので、全部いっぺんにはしない」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>64 は payload サイズを知らないまま決めた固定値。1KB の JSON でも 50MB の画像でも同じ64件なので、前者では往復が無駄に多く、後者では 3GB をメモリに載せる。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>大きな予測（点群、高解像度マスク）を扱うと採点の途中でメモリを使い切る。最初に出る症状は、<b>サンプル数ではなく1サンプルあたりのサイズ</b>を上げたときだけ OOM すること — サンプル数を減らしても直らないので、原因がバッチ数だと気づきにくい。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:206">evals.py:PREDICTION_BATCH</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:210">evals.py:_prediction_loader</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:309">evals.py:rescore</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>DuckDB だけ fsspec を通らない — 認証経路が二本ある</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">I/O とネットワーク</p>
+    <div class="field"><span class="label">選んだ方式</span>storage.py は fsspec のみ（「boto3 を import しない」とモジュール docstring が宣言）。しかし <code>query._connect</code> は DuckDB に httpfs / aws 拡張を読ませ、<code>CREATE SECRET … PROVIDER credential_chain</code> で独自に認証する。aws 拡張が入らない環境では <code>except Exception</code> で環境変数から直接 <code>s3_access_key_id</code> 等を設定するフォールバックに落ちる。<code>duckdb_path</code> が、ローカルはプレーンなパス・リモートは URL を返して両者を橋渡しする。</div>
+    <div class="field"><span class="label">理由</span><code>duckdb_path</code> の docstring に明記（「DuckDB は fsspec を通らない」）。credential_chain を選ぶ理由もコメントにある — botocore と同じ経路（環境変数、~/.aws、IAM ロール）に揃えるため。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>認証の経路が2本あり、片方だけ通る状態が成立する（fsspec で読めるのに DuckDB で読めない）。さらに <code>_connect</code> は呼ばれるたびに新しいコネクションを作り、リモートなら毎回 <code>INSTALL httpfs; LOAD httpfs;</code> を実行する。プールも再利用も無い。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>IAM ロールで動くコンテナで aws 拡張のダウンロードが失敗すると <code>except</code> に落ち、環境変数だけを見る経路になる。環境変数が無ければ<b>認証情報を一切設定しないまま</b>接続を試みる（<code>test_without_the_aws_extension_and_without_credentials_nothing_is_set</code> がその状態を固定している）。最初に出る症状は、web の一覧だけが 403 で落ち、CLI の書き込みは通ること — fsspec 側はロールで通るため、「権限は合っているはず」と読める。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/query.py:19">query.py:_connect</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/query.py:15">query.py:_needs_httpfs</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:67">storage.py:duckdb_path</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_query.py:1">test_query.py</a></div>
+  </article>
+  <h2>永続化と一貫性</h2>
+  <article class="card">
+    <div class="card-head"><h3>「評価済み」の印は、必ず最後に書く</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">永続化と一貫性</p>
+    <div class="field"><span class="label">選んだ方式</span><code>score_run</code> は metrics.parquet / report.md / _meta.json / assets を <code>write_many</code> で一括投入したあと、<b>別の書き込みとして</b> <code>result/row.json</code> を最後に書く。</div>
+    <div class="field"><span class="label">理由</span>コメントに明記。「row.json が run を評価済みにする — 一覧にとっても、二重採点の拒否にとっても。全部の後に書くということは、途中で死んだ採点が run を未評価のまま残す＝単にやり直せるということ」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>途中で死ぬと metrics / report / assets がゴミとして残り、誰も掃除しない（vacuum は checkpoint しか触らない）。やり直せば同じキーに上書きされるので実害は出ないが、「row.json の無い run のディレクトリに前回の残骸が入っている」という状態が正常系として存在する。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span><code>_meta.json</code> の status も一括投入側で "scored" になるので、row.json を書く直前で落ちると <b>meta は scored、一覧は running</b> という食い違いが残る。最初に出る症状は、run 詳細のメタ表示と一覧の表示が一致しないこと。一覧が真実（row.json を見る）なので運用上の実害が出にくく、そのぶん気づかれない。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:227">evals.py:score_run</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_hardening.py:1">test_hardening.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>取り下げは「結果を消してから」印を書く — 採点と逆の順序</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">永続化と一貫性</p>
+    <div class="field"><span class="label">選んだ方式</span><code>withdraw_run</code> は先に <code>result/row.json</code> を <code>rm</code> し、そのあと <code>_withdrawn.json</code> を書く。</div>
+    <div class="field"><span class="label">理由</span>コメントに明記。「途中で死んだ取り下げが、結果として読める run を残してはならない。印が無ければ running として読まれ、それは画面に出るのでもう一度取り下げればよい」。前のカードと真逆の順序を、<b>同じ原理（危険でない側に倒れる順序を選ぶ）</b>から導いている。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>cairn の中で <code>rm</code> を使う数少ない場所で、追記専用の原則から外れている。結果行は本当に消えるので、「取り下げ前は何点だったか」は metrics.parquet を直接読まないと分からない。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>取り下げは意図的に不可逆で、同じ evaluator_version で結果に戻す手段はコードに存在しない。最初に出る症状は「取り下げ取り消し」を探して見つからないこと。<b>ただし別バージョンなら <code>rescore</code> で戻る</b> — その扱いは下の「未解決」を参照。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:446">evals.py:withdraw_run</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_core_rules.py:1">test_core_rules.py</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_hardening.py:1">test_hardening.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>checkpoint は「最新」ではなく「一番広く覆っているもの」を選ぶ</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">永続化と一貫性</p>
+    <div class="field"><span class="label">選んだ方式</span><code>_checkpoints</code> は <code>(len(covered), file)</code> でソートし、<code>_newest_checkpoint</code> はその末尾を返す。</div>
+    <div class="field"><span class="label">理由</span>docstring に明記。「単に最新のものではない：先に始まった writer が後に終わることがあり、そのチェックポイントは覆う範囲が狭いのにファイル名では後ろに並ぶ」。ULID 名は<b>生成時刻</b>順であって完了時刻順ではない、という点を突いている。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>全 checkpoint の JSON を毎回読む必要がある（<code>_checkpoints</code> は manifest 配下の .json を全部 <code>read_many</code> する）。名前だけ見て最新を取るなら listing だけで済んだ。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>vacuum が回っていない環境では manifest の .json が溜まり続け、<b>追記のたびに呼ばれる</b> <code>_needs_checkpoint</code> が毎回それを全部読む。最初に出る症状は、行数は変わっていないのに<b>追記だけが</b>じわじわ遅くなること。読み出し側は checkpoint を1個しか使わないので、体感は変わらない。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:242">dataset.py:_checkpoints</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:259">dataset.py:_newest_checkpoint</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:214">dataset.py:_needs_checkpoint</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_hardening.py:1">test_hardening.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>vacuum — cairn で唯一、読者の足元からファイルが消える場所</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">永続化と一貫性</p>
+    <div class="field"><span class="label">選んだ方式</span>覆う範囲が上位 <code>keep=2</code> 件より狭く、<b>かつ</b> ULID の時刻が <code>min_age_days=7</code> より古い checkpoint だけを削除する。<code>rows/</code> には絶対に触らない。</div>
+    <div class="field"><span class="label">理由</span>docstring に明記。「ここだけが、読者がすでに選んだファイルが足元から消えうる場所。だから『置き換えられた』かつ『どんな読み取りより長い時間が経った』の両方が要る」。<code>rows/</code> を残すのは、過去の run の snapshot（<code>keys</code>）が今も解決できるようにするため。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>7日という数字は「どんな読み取りよりも長い」という前提を人間が保証している（コードは検証しない）。ストレージ課金は checkpoint 2世代ぶんを常に払う。そして GC は手動（<code>cairn vacuum</code>）なので、誰も打たなければ何も消えない — つまり上のカードの「追記が遅くなる」は放置すると必ず起きる。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>7日以上かかる読み取りが並走すると、選んだ checkpoint が消えて FileNotFoundError になる。最初に出る症状は一覧ページが 500 を返すこと（<code>rows_page</code> が checkpoint パスを DuckDB に渡した直後で落ちる）。<span class="inf">7日という余裕からして現実的な条件ではなく、構造上の可能性の指摘</span>。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:324">dataset.py:vacuum</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:317">dataset.py:VACUUM_KEEP</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:320">dataset.py:VACUUM_MIN_AGE_DAYS</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>予測はサンプル id をキーにする — ここだけ上書きを許した</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">永続化と一貫性</p>
+    <div class="field"><span class="label">選んだ方式</span>書き込み先は <code>predictions/{percent-encoded sample_id}.{ext}</code>。同じサンプルに二度書けば後勝ちで上書きされる。sample_id は<b>ドットまで含めて</b>全部 percent-encode するので、ファイル名に残るドットは拡張子の前の1個だけ。</div>
+    <div class="field"><span class="label">理由</span>README の「Lock-free」節が明示的に例外として挙げている。「1つのタスクが1つのサンプルを所有し、リトライが2つの答えを残してはならない」。ドットを潰すのは <code>_prediction_loader</code> が <code>split(".", 1)</code> で id と拡張子を分けるため（docstring に明記）。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>追記専用の原則から外れた2つ目の場所。予測の履歴は残らないので「リトライ前は何を返していたか」は追えない。percent-encode したファイル名は人間が読めない。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>2つのジョブが同じサンプルを同時に担当すると（オーケストレータ側の重複投入）、どちらが残るかは不定。最初に出る症状は、<b>予測数は合っているのにスコアが再現しない</b>こと — 台帳側には何の異常も出ないので、原因を cairn の外に探すことになる。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:175">evals.py:_pred_name</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:185">evals.py:write_prediction</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:210">evals.py:_prediction_loader</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_hardening.py:1">test_hardening.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>snapshot_id は「ファイル集合」ではなく「マージ後の内容」のハッシュ</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">永続化と一貫性</p>
+    <div class="field"><span class="label">選んだ方式</span><code>snapshot</code> は行をマージし、キー順に正規化した JSON を SHA-256 して先頭12文字を取る。返り値には <code>keys</code>（再現用のファイル集合）、<code>snapshot_id</code>（内容の同一性）、<code>sample_ids</code>（何が固定されたか）を全部入れる。</div>
+    <div class="field"><span class="label">理由</span>docstring と README に明記。同じ行を再取り込みしても snapshot_id は変わらず、値の更新や削除では変わる。「2つの run が比較可能なのは snapshot_id が一致するときちょうど」を成立させるため。<code>sample_ids</code> を同梱するのは「もう merge 済みなのでタダ、そして下流が同じことを聞くためだけに再マージするのを防げる」から。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>run を1つ作るたびにデータセット全体をマージし、その全体を1本の JSON 文字列に落として SHA-256 する（<code>create_run</code> は必ずこれを通る）。さらに <code>sample_ids</code> を丸ごと <code>_snapshot.json</code> に書くので、スナップショットのサイズが行数に比例する。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>行数が数十万になると <code>_snapshot.json</code> 自体が大きくなり、<code>target_ids</code>（docstring が「小さな読み取り」と呼んでいるもの）が小さくなくなる。最初に出る症状は run 作成が数秒かかるようになること、続いて <code>cairn eval targets</code> の応答が重くなること。<span class="inf">（閾値は構造からの推論。実測ではない）</span></div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:182">dataset.py:snapshot</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:77">evals.py:create_run</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:500">evals.py:target_ids</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_hardening.py:1">test_hardening.py</a></div>
+  </article>
+  <h2>境界と依存</h2>
+  <article class="card">
+    <div class="card-head"><h3>列の型検証を pydantic ではなく述語テーブルで自前に持った</h3><span class="tag guess">推測</span></div>
+    <p class="cat">境界と依存</p>
+    <div class="field"><span class="label">選んだ方式</span><code>_CHECKS</code> は「型名 → 述語」の辞書。<code>float</code> は int も受けるが bool は弾き、<code>int</code> も bool を弾く。<code>datetime</code> は ISO 文字列（"Z" を "+00:00" に置換して）も受ける。<code>json</code> は何でも通し、<code>s3path</code> は str と同じ。検証は例外を投げず<b>エラーのリストを返す</b>。</div>
+    <div class="field"><span class="label">理由</span>リストで返す形の理由だけは実装から確認できる — <code>append</code> が「通った行は入れ、落ちた行は <code>rejected</code> として返す」ためで、1行の不備で取り込み全体を落とさない設計になっている。一方、<b>pydantic の型ではなく述語辞書にした理由はどこにも書かれていない</b>（bool を弾くのは <code>isinstance(True, int)</code> が真という言語仕様への対処だろうが、これも推測）。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>列の型が pydantic モデルとして表現されないので、スキーマから Python の型が生えない。<code>s3path</code> は str と区別されず、宣言しても何も検証されない（表示のヒントとしてしか機能しない）。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span><b>未知の型名を書いてもエラーにならない。</b> <code>_CHECKS.get(col.type)</code> が None を返し、<code>if check and …</code> で検証ごとスキップされる。最初に出る症状は、<code>type: integer</code>（正しくは <code>int</code>）と書いた列が「何でも受け入れる列」として静かに動くこと — スキーマ作成時にも取り込み時にも警告が出ない。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/schema.py:43">schema.py:_CHECKS</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/schema.py:123">schema.py:validate_row</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/schema.py:181">schema.py:validate_result_row</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:73">dataset.py:append</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>cairn が書く共通列を予約語にして、スクリプトから守った</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">境界と依存</p>
+    <div class="field"><span class="label">選んだ方式</span><code>COMMON_EVAL_COLUMNS</code>（eval_id, snapshot_id, created_at ほか計11列）と同名の列を table.yaml に書くと、テーブルの<b>読み込み／作成の両方</b>で拒否される。<code>score_run</code> は評価器が返した行の<b>上から</b>共通列を被せる（<code>{**result.row, **common}</code>）。</div>
+    <div class="field"><span class="label">理由</span>コメントに明記。「共通メタデータは cairn が書く。同名の列があると、スクリプトが一覧上の snapshot_id や created_at を上書きできてしまう」。比較可能性の判定そのもの（snapshot_id と evaluator_version）が乗っている列なので、ここを守らないと台帳の主張が崩れる。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>予約語が11個あり、そのリストは Python の定数にしかない。<code>title</code> や <code>comment</code> という自然な列名が使えない理由は、エラーメッセージを読むまで分からない。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span>予約列を将来1つ増やすと、その名前を使っていた既存の table.yaml が<b>読み込み時に</b>（<code>load_eval_table</code> → <code>parse_eval_table</code> → <code>model_post_init</code>）例外になる。最初に出る症状は、データは無事なのに既存の eval テーブルのページが丸ごと開かなくなること。検証が作成時ではなく読み出し時に走るので、アップグレードした瞬間に全ユーザーへ出る。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/schema.py:60">schema.py:COMMON_EVAL_COLUMNS</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/schema.py:113">schema.py:model_post_init</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:227">evals.py:score_run</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:59">evals.py:load_eval_table</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>root が「場所を指していない」だけで起動を止める</h3><span class="tag ok">コード確認済み</span></div>
+    <p class="cat">境界と依存</p>
+    <div class="field"><span class="label">選んだ方式</span><code>_check_root</code> は、スキームらしきものがあるのに <code>://</code> が無い場合と、<code>://</code> の後ろが空の場合を <code>ValueError</code> にする。正規表現は<b>2文字以上</b>のスキームを要求する（Windows のドライブレターをプロトコルと誤認しないため）。</div>
+    <div class="field"><span class="label">理由</span>docstring に明記。「<code>s3:::bucket/x</code> は S3 全体として、<code>s3:/bucket/x</code> はその名前のローカルディレクトリとしてパースされる。どちらにせよレジストリは空に見えるか、誰も見ていない場所に溜まる。そして『0 データセット』のページは、空のレジストリと見分けがつかない」。</div>
+    <div class="field"><span class="label">代償（すでに払っているもの）</span>バケットが実在するか、書き込めるかは一切確かめていない。形式だけの検査なので、存在しないバケット名や typo は通る。守れているのは「明らかに場所ではない文字列」だけ。</div>
+    <div class="field"><span class="label">壊れ方（条件が揃えば起きること）</span><code>s3://bucket-typo/cairn</code> は検査を通り、レジストリは空に見える — <b>まさに docstring が防ごうとしている症状が、別の原因で起きる</b>。最初に出る症状は「0 データセット」で、切り分けの手掛かりは画面に出ない。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:22">storage.py:_check_root</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/storage.py:41">storage.py:Storage.__init__</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_core_rules.py:1">test_core_rules.py</a><a href="vscode://file//Users/hosaka/src/private/cairn/tests/test_hardening.py:1">test_hardening.py</a></div>
+  </article>
+  <h2>一般解説</h2>
+  <div class="note"><span class="label">一般解説 — このコードの事実ではありません</span><h3 style="margin:.4rem 0 .5rem">この設計が前提にしている S3 の保証（一般解説）</h3>
+<p>このコードの「ロックが要らない」という主張は、S3 側の2つの性質に寄りかかっています。どちらも cairn のコードには書かれていない外部の事実なので、切り分けて置きます。</p>
+<p><b>1. PUT は単一キーについて原子的。</b> 読者は「書かれる前」か「書かれた後」しか見ず、途中は見ません。だから <code>write_bytes</code> はリモートで一時ファイルを使いません。ただし原子的なのは<b>1キーだけ</b>で、複数キーの一括書き込み（<code>fs.pipe</code>）は原子的ではありません — 上のカードで <code>score_run</code> が row.json を分けている理由がこれです。</p>
+<p><b>2. 2020年12月以降、S3 は read-after-write と LIST の両方で強一貫。</b> それ以前の S3 は LIST が結果整合で、「書いたばかりのキーが LIST に出てこない」ことがありました。もしそれが今も真なら、snapshot が取り逃したファイルを後から拾ってしまい、「スナップショットは不変」という主張が成立しません。GCS も同様に強一貫ですが、<b>MinIO や他の S3 互換ストアが同じ保証を出すかは実装次第</b>です。<code>CAIRN_ROOT</code> を S3 互換ストアに向ける場合、ここが暗黙の前提になります。</p>
+<p>逆に、S3 が提供<b>しない</b>もの：compare-and-swap、条件付き書き込み（cairn が使う API の範囲では）、複数キーにまたがるトランザクション。この3つが無いという事実が、この層のほぼ全ての判断の出発点です。</p>
+</div>
+  <h2>未解決</h2>
+  <p class="sub" style="margin:-.4rem 0 1rem">意図がコードから読み取れなかった箇所。設計の穴とは限らず、聞けば一言で終わるものも含みます。</p>
+  <article class="card">
+    <div class="card-head"><h3><code>read_page</code> の <code>order_by</code> / <code>where_col</code> が SQL に直接埋め込まれている</h3><span class="tag todo">要確認</span></div>
+    <div class="field" style="border-top:none;padding-top:0">docstring は「これらはユーザー入力ではなくコードから来る」と書いていますが、<code>src/</code> の中でこの2つを渡している呼び出しは<b>1つもありません</b>（<code>rows_page</code> は limit/offset だけ、<code>count</code> も where 無しで呼ばれます）。使われていない引数に、文字列連結で SQL を組む経路だけが残っている状態です。将来の機能のための口なのか、消し忘れなのかがコードからは読めません。ここに列名を渡す呼び出しを足す人が docstring を読まなければ、その時点で任意 SQL が通ります。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/query.py:57">query.py:read_page</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/query.py:82">query.py:count</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:280">dataset.py:rows_page</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>追記のたびに再帰リストが2回以上走るのは、意図した割り切りか</h3><span class="tag todo">要確認</span></div>
+    <div class="field" style="border-top:none;padding-top:0"><code>files()</code> の docstring は「同じプレフィックス配下なので1回のリストで済ませる」と明言し、<code>list_ingests</code> / <code>count_rows</code> / <code>info</code> は取得済みの <code>Files</code> を <code>listed</code> 引数で引き回しています。ところが <code>_needs_checkpoint</code> は <code>_newest_checkpoint</code>（内部で <code>files()</code>）と <code>_row_files</code>（同じく <code>files()</code>）を別々に呼び、<code>listed</code> を渡していません。つまり追記1回につき再帰リストが最低2回、checkpoint を書く回はさらに <code>write_checkpoint</code> の中でもう1回。同じファイル内に「引き回す」パターンが確立しているだけに、ここだけ渡していないのが割り切りなのか見落としなのかが読めません。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:214">dataset.py:_needs_checkpoint</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:127">dataset.py:files</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:259">dataset.py:_newest_checkpoint</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/dataset.py:219">dataset.py:write_checkpoint</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3><code>Config.auth_header</code> を読むコードが無い</h3><span class="tag todo">要確認</span></div>
+    <div class="field" style="border-top:none;padding-top:0"><code>auth_header</code>（既定 <code>X-Forwarded-User</code>）は <code>CAIRN_AUTH_HEADER</code> で設定でき、CLI の設定表示にも出ますが、<code>src/</code> 全体を探しても <code>config.py</code> の外でこの値を<b>読んでいる場所がありません</b>。web の <code>created_by</code> は環境変数 <code>CAIRN_USER</code> から取っており、リクエストヘッダを見ていません。リバースプロキシ認証を想定した設計の名残なのか、これから繋ぐつもりの口なのか。設定できるのに効かない項目は、運用時に「設定したのに created_by が変わらない」という形で必ず一度は人を止めます。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/config.py:42">config.py:auth_header</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/config.py:46">config.py:load_config</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/web/app.py:1">app.py</a></div>
+  </article>
+  <article class="card">
+    <div class="card-head"><h3>取り下げた run を rescore できてよいのか</h3><span class="tag todo">要確認</span></div>
+    <div class="field" style="border-top:none;padding-top:0"><code>withdraw_run</code> は docstring で「最終的（final）」と宣言し、<code>ensure_writable</code> も <code>score_run</code> も withdrawn な run を拒否します。しかし <code>rescore</code> は元 run の <code>_meta.json</code> を読むだけで withdrawn を見ておらず、予測をコピーして新しい run として採点します。結果として、<b>取り下げた run の予測が、別の evaluator_version の下で生きた結果として一覧に戻ってきます</b>（同一バージョンは別の理由 — 「すでにそのバージョンで採点済み」 — で拒否されるので、そこだけは偶然塞がっています）。取り下げの「最終性」がどこまでを指すのかが、コードからは決まりません。</div>
+<div class="refs"><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:309">evals.py:rescore</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:446">evals.py:withdraw_run</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:514">evals.py:ensure_writable</a><a href="vscode://file//Users/hosaka/src/private/cairn/src/cairn/core/evals.py:227">evals.py:score_run</a></div>
+  </article>
+
+  <footer>生成 2026-08-31 10:23 / 対象 98f23d63e6fc66df47cdda6b7b909f3dab39ba15<br>
+  行番号は生成時にシンボル名から解決しています。コードを変更したら、このレポートは再生成してください（差分更新はしません）。</footer>
+</main>
+</body>
+</html>
